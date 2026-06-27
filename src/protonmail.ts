@@ -9,7 +9,7 @@ import { Data, Effect } from "effect";
 import { Type } from "typebox";
 
 import { PREVIEW_LINES } from "./constants.ts";
-import { openProtonMailHub } from "./protonmail-tui.ts";
+import { openProtonMailHub } from "./hub.ts";
 import { resolveSecretReference } from "./secret-refs.ts";
 import type {
 	BridgeStatusResult,

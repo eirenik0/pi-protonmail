@@ -26,7 +26,7 @@ Thin entrypoint that hands the Pi extension API to the Proton Bridge registrar.
 
 Main implementation for command/tool registration, helper execution, and message formatting.
 
-### `src/protonmail-tui.ts`
+### `src/hub.ts`
 
 Interactive Proton Mail setup hub for editing profile defaults before LLM workflows use them.
 
