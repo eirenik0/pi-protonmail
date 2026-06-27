@@ -10,6 +10,22 @@ export interface ProtonBridgeConfig {
 	defaultMailbox?: string;
 }
 
+export interface ProtonMailProfilePolicy {
+	default_mailbox?: string;
+	mailbox_filter?: string;
+	default_period?: string;
+}
+
+export interface ProtonMailWorkspaceConfig {
+	activeProfile?: string;
+}
+
+export interface ProtonMailWorkingProfile {
+	profile: string;
+	policy: ProtonMailProfilePolicy;
+	policyPath: string;
+}
+
 export interface HelperSuccess<T> {
 	ok: true;
 	result: T;

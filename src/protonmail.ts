@@ -19,8 +19,16 @@ import type {
 	MailboxListResult,
 	MessageListResult,
 	ProtonBridgeConfig,
+	ProtonMailWorkingProfile,
 	ToolContext,
 } from "./types.ts";
+import {
+	listProtonMailProfiles,
+	normalizeProtonMailProfile,
+	protonMailProfilePolicyPath,
+	readProtonMailProfilePolicy,
+	readProtonMailWorkspaceConfig,
+} from "./workspace.ts";
 
 class ProtonCommandError extends Data.TaggedError("ProtonCommandError")<{
 	message: string;
@@ -82,9 +90,39 @@ function parseMonthPeriod(value?: string): string | undefined {
 	return /^\d{4}-\d{2}$/.test(value) ? value : undefined;
 }
 
-function protonBridgeSetupHint(): string {
+function protonBridgeSetupHint(profile?: string): string {
+	return protonMailSetupHint(profile);
+}
+
+async function getProtonBridgeConfig(defaultMailbox?: string): Promise<ProtonBridgeConfig> {
+	const host = process.env.PROTON_BRIDGE_HOST?.trim() || "127.0.0.1";
+	const imapPort = Number.parseInt(process.env.PROTON_BRIDGE_IMAP_PORT?.trim() || "1143", 10);
+	const smtpPort = Number.parseInt(process.env.PROTON_BRIDGE_SMTP_PORT?.trim() || "1025", 10);
+	const security = process.env.PROTON_BRIDGE_IMAP_SECURITY?.trim() || "starttls";
+	const envDefaultMailbox = process.env.PROTON_BRIDGE_DEFAULT_MAILBOX?.trim() || undefined;
+	const rawUsername = process.env.PROTON_BRIDGE_USERNAME?.trim() || undefined;
+	const rawPassword = process.env.PROTON_BRIDGE_PASSWORD?.trim() || undefined;
+	const username = rawUsername
+		? await resolveSecretReference(rawUsername, "Proton Bridge username")
+		: undefined;
+	const password = rawPassword
+		? await resolveSecretReference(rawPassword, "Proton Bridge password")
+		: undefined;
+	return {
+		host,
+		imapPort,
+		smtpPort,
+		username,
+		password,
+		security,
+		defaultMailbox: defaultMailbox ?? envDefaultMailbox,
+	};
+}
+
+function protonMailSetupHint(profile?: string): string {
+	const profileHint = profile ? ` for profile \`${profile}\`` : "";
 	return [
-		"Proton Bridge mail intake is not fully configured.",
+		`Proton Bridge mail intake${profileHint} is not fully configured.`,
 		"",
 		"Add these variables to .env before starting Pi:",
 		"- PROTON_BRIDGE_HOST=127.0.0.1",
@@ -99,21 +137,49 @@ function protonBridgeSetupHint(): string {
 	].join("\n");
 }
 
-async function getProtonBridgeConfig(): Promise<ProtonBridgeConfig> {
-	const host = process.env.PROTON_BRIDGE_HOST?.trim() || "127.0.0.1";
-	const imapPort = Number.parseInt(process.env.PROTON_BRIDGE_IMAP_PORT?.trim() || "1143", 10);
-	const smtpPort = Number.parseInt(process.env.PROTON_BRIDGE_SMTP_PORT?.trim() || "1025", 10);
-	const security = process.env.PROTON_BRIDGE_IMAP_SECURITY?.trim() || "starttls";
-	const defaultMailbox = process.env.PROTON_BRIDGE_DEFAULT_MAILBOX?.trim() || undefined;
-	const rawUsername = process.env.PROTON_BRIDGE_USERNAME?.trim() || undefined;
-	const rawPassword = process.env.PROTON_BRIDGE_PASSWORD?.trim() || undefined;
-	const username = rawUsername
-		? await resolveSecretReference(rawUsername, "Proton Bridge username")
+async function listProtonMailWorkingProfiles(cwd: string): Promise<ProtonMailWorkingProfile[]> {
+	const profiles = new Map<string, ProtonMailWorkingProfile>();
+	for (const profile of await listProtonMailProfiles(cwd)) {
+		profiles.set(profile, {
+			profile,
+			policy: await readProtonMailProfilePolicy(cwd, profile),
+			policyPath: protonMailProfilePolicyPath(profile, cwd),
+		});
+	}
+
+	const defaultProfile = normalizeProtonMailProfile("default");
+	if (!profiles.has(defaultProfile)) {
+		profiles.set(defaultProfile, {
+			profile: defaultProfile,
+			policy: await readProtonMailProfilePolicy(cwd, defaultProfile),
+			policyPath: protonMailProfilePolicyPath(defaultProfile, cwd),
+		});
+	}
+
+	return [...profiles.values()].sort((left, right) => left.profile.localeCompare(right.profile));
+}
+
+async function resolveProtonMailActiveProfile(
+	cwd: string,
+	explicitProfile?: string,
+): Promise<ProtonMailWorkingProfile> {
+	const profiles = await listProtonMailWorkingProfiles(cwd);
+	const normalizedExplicit = explicitProfile?.trim()
+		? normalizeProtonMailProfile(explicitProfile)
 		: undefined;
-	const password = rawPassword
-		? await resolveSecretReference(rawPassword, "Proton Bridge password")
-		: undefined;
-	return { host, imapPort, smtpPort, username, password, security, defaultMailbox };
+	if (normalizedExplicit) {
+		const explicit = profiles.find((profile) => profile.profile === normalizedExplicit);
+		if (explicit) return explicit;
+		return {
+			profile: normalizedExplicit,
+			policy: await readProtonMailProfilePolicy(cwd, normalizedExplicit),
+			policyPath: protonMailProfilePolicyPath(normalizedExplicit, cwd),
+		};
+	}
+
+	const workspace = await readProtonMailWorkspaceConfig(cwd);
+	const activeProfile = normalizeProtonMailProfile(workspace.activeProfile);
+	return profiles.find((profile) => profile.profile === activeProfile) ?? profiles[0];
 }
 
 async function runHelper<T>(
@@ -166,8 +232,11 @@ async function runHelper<T>(
 	});
 }
 
-async function protonBridgeStatus(cwd: string): Promise<BridgeStatusResult> {
-	const config = await getProtonBridgeConfig();
+async function protonBridgeStatus(
+	cwd: string,
+	defaultMailbox?: string,
+): Promise<BridgeStatusResult> {
+	const config = await getProtonBridgeConfig(defaultMailbox);
 	return runHelper<BridgeStatusResult>(cwd, "status", {
 		config: {
 			host: config.host,
@@ -181,9 +250,13 @@ async function protonBridgeStatus(cwd: string): Promise<BridgeStatusResult> {
 	});
 }
 
-async function listProtonMailboxes(cwd: string, query?: string): Promise<MailboxListResult> {
-	const config = await getProtonBridgeConfig();
-	if (!config.username || !config.password) throw new Error(protonBridgeSetupHint());
+async function listProtonMailboxes(
+	cwd: string,
+	query?: string,
+	defaultMailbox?: string,
+): Promise<MailboxListResult> {
+	const config = await getProtonBridgeConfig(defaultMailbox);
+	if (!config.username || !config.password) throw new Error(protonBridgeSetupHint(defaultMailbox));
 	return runHelper<MailboxListResult>(cwd, "list-mailboxes", {
 		config: {
 			host: config.host,
@@ -205,9 +278,10 @@ async function listProtonMessages(
 	query?: string,
 	unseenOnly = false,
 	limit = 20,
+	defaultMailbox?: string,
 ): Promise<MessageListResult> {
-	const config = await getProtonBridgeConfig();
-	if (!config.username || !config.password) throw new Error(protonBridgeSetupHint());
+	const config = await getProtonBridgeConfig(defaultMailbox);
+	if (!config.username || !config.password) throw new Error(protonBridgeSetupHint(defaultMailbox));
 	return runHelper<MessageListResult>(cwd, "list-messages", {
 		config: {
 			host: config.host,
@@ -337,9 +411,18 @@ export default function registerProtonBridgeExtension(pi: ExtensionAPI) {
 			runProtonBoundary(
 				ctx,
 				Effect.gen(function* () {
-					const result = yield* effectFromProtonPromise(() => protonBridgeStatus(ctx.cwd));
+					const profile = yield* effectFromProtonPromise(() =>
+						resolveProtonMailActiveProfile(ctx.cwd),
+					);
+					const result = yield* effectFromProtonPromise(() =>
+						protonBridgeStatus(ctx.cwd, profile.policy.default_mailbox),
+					);
 					yield* Effect.sync(() => {
-						sendReport(pi, "Proton Bridge status", formatStatusSummary(result));
+						sendReport(
+							pi,
+							`Proton Bridge status • ${profile.profile}`,
+							formatStatusSummary(result),
+						);
 					});
 				}),
 			),
@@ -351,12 +434,19 @@ export default function registerProtonBridgeExtension(pi: ExtensionAPI) {
 			runProtonBoundary(
 				ctx,
 				Effect.gen(function* () {
+					const profile = yield* effectFromProtonPromise(() =>
+						resolveProtonMailActiveProfile(ctx.cwd),
+					);
 					const query = args.trim() || undefined;
-					const result = yield* effectFromProtonPromise(() => listProtonMailboxes(ctx.cwd, query));
+					const result = yield* effectFromProtonPromise(() =>
+						listProtonMailboxes(ctx.cwd, query, profile.policy.default_mailbox),
+					);
 					yield* Effect.sync(() => {
 						sendReport(
 							pi,
-							query ? `Proton mailboxes matching ${query}` : "Proton mailboxes",
+							query
+								? `Proton mailboxes matching ${query}`
+								: `Proton mailboxes • ${profile.profile}`,
 							formatMailboxSummary(result, query),
 						);
 					});
@@ -370,15 +460,26 @@ export default function registerProtonBridgeExtension(pi: ExtensionAPI) {
 			runProtonBoundary(
 				ctx,
 				Effect.gen(function* () {
+					const profile = yield* effectFromProtonPromise(() =>
+						resolveProtonMailActiveProfile(ctx.cwd),
+					);
 					const parsed = yield* effectFromProtonThunk(() => parseMessagesCommandArgs(args));
 					const result = yield* effectFromProtonPromise(() =>
-						listProtonMessages(ctx.cwd, parsed.mailbox, parsed.period, undefined, false, 20),
+						listProtonMessages(
+							ctx.cwd,
+							parsed.mailbox,
+							parsed.period ?? profile.policy.default_period,
+							undefined,
+							false,
+							20,
+							profile.policy.default_mailbox,
+						),
 					);
 					yield* Effect.sync(() => {
 						sendReport(
 							pi,
-							`Proton messages ${result.mailbox}${parsed.period ? ` ${parsed.period}` : ""}`,
-							formatMessageSummary(result, parsed.period),
+							`Proton messages ${result.mailbox}${(parsed.period ?? profile.policy.default_period) ? ` ${parsed.period ?? profile.policy.default_period}` : ""}`,
+							formatMessageSummary(result, parsed.period ?? profile.policy.default_period),
 						);
 					});
 				}),
@@ -391,16 +492,33 @@ export default function registerProtonBridgeExtension(pi: ExtensionAPI) {
 			runProtonBoundary(
 				ctx,
 				Effect.gen(function* () {
+					const profile = yield* effectFromProtonPromise(() =>
+						resolveProtonMailActiveProfile(ctx.cwd),
+					);
+					const initialArgs = args.trim()
+						? args
+						: [profile.policy.default_mailbox, profile.policy.default_period]
+								.filter(Boolean)
+								.join(" ");
 					yield* effectFromProtonPromise(() =>
 						openProtonMailHub(
 							ctx,
 							{
-								status: protonBridgeStatus,
-								mailboxes: listProtonMailboxes,
+								status: (cwd) => protonBridgeStatus(cwd, profile.policy.default_mailbox),
+								mailboxes: (cwd, query) =>
+									listProtonMailboxes(cwd, query, profile.policy.default_mailbox),
 								messages: (cwd, mailbox, period) =>
-									listProtonMessages(cwd, mailbox, period, undefined, false, 50),
+									listProtonMessages(
+										cwd,
+										mailbox,
+										period,
+										undefined,
+										false,
+										50,
+										profile.policy.default_mailbox,
+									),
 							},
-							args,
+							initialArgs,
 						),
 					);
 				}),
@@ -424,7 +542,8 @@ export default function registerProtonBridgeExtension(pi: ExtensionAPI) {
 			_onUpdate: unknown,
 			ctx: ToolContext,
 		) {
-			const result = await protonBridgeStatus(ctx.cwd);
+			const profile = await resolveProtonMailActiveProfile(ctx.cwd);
+			const result = await protonBridgeStatus(ctx.cwd, profile.policy.default_mailbox);
 			return {
 				content: [{ type: "text", text: trimText(formatStatusSummary(result), 160, 16000) }],
 				details: result,
@@ -455,7 +574,12 @@ export default function registerProtonBridgeExtension(pi: ExtensionAPI) {
 			_onUpdate: unknown,
 			ctx: ToolContext,
 		) {
-			const result = await listProtonMailboxes(ctx.cwd, params.query);
+			const profile = await resolveProtonMailActiveProfile(ctx.cwd);
+			const result = await listProtonMailboxes(
+				ctx.cwd,
+				params.query,
+				profile.policy.default_mailbox,
+			);
 			return {
 				content: [
 					{ type: "text", text: trimText(formatMailboxSummary(result, params.query), 160, 16000) },
@@ -508,20 +632,26 @@ export default function registerProtonBridgeExtension(pi: ExtensionAPI) {
 			_onUpdate: unknown,
 			ctx: ToolContext,
 		) {
+			const profile = await resolveProtonMailActiveProfile(ctx.cwd);
 			const period = params.period ? parseMonthPeriod(params.period) : undefined;
 			if (params.period && !period)
 				throw new Error(`Invalid period \`${params.period}\`. Expected YYYY-MM.`);
+			const resolvedPeriod = period ?? profile.policy.default_period;
 			const result = await listProtonMessages(
 				ctx.cwd,
 				params.mailbox,
-				period,
+				resolvedPeriod,
 				params.query,
 				params.unseenOnly ?? false,
 				params.limit ?? 20,
+				profile.policy.default_mailbox,
 			);
 			return {
 				content: [
-					{ type: "text", text: trimText(formatMessageSummary(result, period), 160, 16000) },
+					{
+						type: "text",
+						text: trimText(formatMessageSummary(result, resolvedPeriod), 160, 16000),
+					},
 				],
 				details: result,
 			};
