@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { getMarkdownTheme } from "@earendil-works/pi-coding-agent";
@@ -121,7 +121,7 @@ async function runHelper<T>(
 	action: string,
 	payload: Record<string, unknown>,
 ): Promise<T> {
-	const helperPath = resolve(cwd, ".pi/helpers/proton_bridge.py");
+	const helperPath = fileURLToPath(new URL("../helpers/proton_bridge.py", import.meta.url));
 	return new Promise<T>((resolvePromise, reject) => {
 		const child = spawn("python3", [helperPath, action], {
 			cwd,

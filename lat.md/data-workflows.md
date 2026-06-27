@@ -4,6 +4,6 @@ This section covers Bridge configuration, helper execution, and the mailbox-orie
 
 ## Proton Bridge helper contract
 
-This extension reads the Bridge env vars, resolves secret references, and then calls `.pi/helpers/proton_bridge.py`.
+This extension reads the Bridge env vars, resolves secret references, and then calls `helpers/proton_bridge.py`.
 
 Secret values may be literal text or 1Password references handled by [[src/secret-refs.ts#resolveSecretReference]].

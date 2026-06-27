@@ -22,4 +22,4 @@ Set the Proton Bridge connection variables in your Pi environment:
 - `PROTON_BRIDGE_PASSWORD`
 - `PROTON_BRIDGE_DEFAULT_MAILBOX` (optional)
 
-The extension expects the helper script at `.pi/helpers/proton_bridge.py` in the working project.
+The extension bundles its Proton Bridge helper script in `helpers/proton_bridge.py`.
