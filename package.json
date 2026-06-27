@@ -1,0 +1,61 @@
+{
+	"name": "pi-protonmail",
+	"version": "0.1.0",
+	"type": "module",
+	"description": "Proton Mail Bridge Pi extension for mailbox discovery and attachment imports.",
+	"homepage": "https://github.com/eirenik0/pi-protonmail#readme",
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/eirenik0/pi-protonmail.git"
+	},
+	"bugs": {
+		"url": "https://github.com/eirenik0/pi-protonmail/issues"
+	},
+	"author": "Serhii Khalymon <serhii.khalymon@pm.me>",
+	"license": "MIT",
+	"keywords": [
+		"pi-package",
+		"pi-extension",
+		"protonmail",
+		"proton-bridge"
+	],
+	"publishConfig": {
+		"access": "public"
+	},
+	"engines": {
+		"node": ">=24"
+	},
+	"pi": {
+		"extensions": [
+			"./src/index.ts"
+		]
+	},
+	"files": [
+		"src",
+		"README.md",
+		"CHANGELOG.md",
+		"LICENSE",
+		"package.json",
+		"biome.json"
+	],
+	"scripts": {
+		"lint": "biome lint .",
+		"format": "biome format --write .",
+		"format:check": "biome format .",
+		"check": "biome check .",
+		"check:docs": "lat check",
+		"prepublishOnly": "npm run check",
+		"fix": "biome check --write ."
+	},
+	"dependencies": {
+		"effect": "^3.0.0"
+	},
+	"devDependencies": {
+		"@biomejs/biome": "^2.5.0"
+	},
+	"peerDependencies": {
+		"@earendil-works/pi-coding-agent": "*",
+		"@earendil-works/pi-tui": "*",
+		"typebox": "*"
+	}
+}
