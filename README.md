@@ -19,6 +19,6 @@ Set the Proton Bridge connection variables in your Pi environment:
 - `PROTON_BRIDGE_PASSWORD`
 - `PROTON_BRIDGE_DEFAULT_MAILBOX` (optional)
 
-The extension bundles its Proton Bridge helper script in `helpers/proton_bridge.py`.
+Proton Bridge operations are implemented in `src/proton-bridge.ts`.
 
 Profile settings are stored under `.pi/protonmail/` as `config.json` plus per-profile `profiles/<name>/policy.json` files. Attachment imports are staged under `.pi/protonmail/imports/<profile>/...` by default and can be adapted through profile policy.

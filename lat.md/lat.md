@@ -11,12 +11,12 @@ This repo packages a Pi extension for Proton Bridge mailbox discovery, message p
 These files capture the extension surface and the Bridge data flow.
 
 - [[extension]] — commands, tools, and user-facing mail workflows.
-- [[data-workflows]] — environment variables, helper script contract, and profile-oriented config.
+- [[data-workflows]] — environment variables, native bridge contract, and profile-oriented config.
 - [[tests]] — behaviors worth keeping stable as the mail workflow evolves.
 
 ## Source layout
 
-The source is split into a thin entrypoint, a single config command, the main Proton Bridge tools, and a few shared helpers.
+The source is split into a thin entrypoint, a single config command, the main Proton Bridge tools, the native bridge module, and a few shared helpers.
 
 ### `src/index.ts`
 
@@ -24,7 +24,11 @@ Thin entrypoint that hands the Pi extension API to the Proton Bridge registrar.
 
 ### `src/protonmail.ts`
 
-Main implementation for the `/protonmail` command, LLM tool registration, helper execution, and message/import formatting.
+Main implementation for the `/protonmail` command, LLM tool registration, bridge orchestration, and message/import formatting.
+
+### `src/proton-bridge.ts`
+
+Native IMAP/login/list/import implementation for Proton Bridge operations using ImapFlow and mailparser.
 
 ### `src/hub.ts`
 

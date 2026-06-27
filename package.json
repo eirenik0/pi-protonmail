@@ -32,7 +32,6 @@
 	},
 	"files": [
 		"src",
-		"helpers",
 		"README.md",
 		"CHANGELOG.md",
 		"LICENSE",
@@ -49,7 +48,9 @@
 		"fix": "biome check --write ."
 	},
 	"dependencies": {
-		"effect": "^3.0.0"
+		"effect": "^3.0.0",
+		"imapflow": "^1.1.1",
+		"mailparser": "^3.9.0"
 	},
 	"devDependencies": {
 		"@biomejs/biome": "^2.5.0"

@@ -4,7 +4,7 @@ This section covers Bridge configuration, helper execution, and the profile-orie
 
 ## Proton Bridge helper contract
 
-This extension reads the Bridge env vars, resolves secret references, and then calls `helpers/proton_bridge.py`.
+This extension reads the Bridge env vars, resolves secret references, and then uses the native TypeScript bridge module in `src/proton-bridge.ts`.
 
 Profile defaults live under `.pi/protonmail/config.json` and `.pi/protonmail/profiles/<name>/policy.json`; those files capture the active setup used later by LLM-oriented workflows. Attachment imports are staged under `.pi/protonmail/imports/<profile>/...` by default, and `import_workspace_root` can override that path for adapted workflows.
 

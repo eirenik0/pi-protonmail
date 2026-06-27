@@ -1,6 +1,4 @@
-import { spawn } from "node:child_process";
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { getMarkdownTheme } from "@earendil-works/pi-coding-agent";
@@ -11,12 +9,16 @@ import { Type } from "typebox";
 
 import { PREVIEW_LINES } from "./constants.ts";
 import { openProtonMailHub } from "./hub.ts";
+import {
+	protonBridgeImportAttachments as runProtonBridgeImportAttachments,
+	protonBridgeListMailboxes as runProtonBridgeListMailboxes,
+	protonBridgeListMessages as runProtonBridgeListMessages,
+	protonBridgeStatus as runProtonBridgeStatus,
+} from "./proton-bridge.ts";
 import { resolveSecretReference } from "./secret-refs.ts";
 import type {
 	BridgeStatusResult,
 	CommandContext,
-	HelperFailure,
-	HelperSuccess,
 	MailboxListResult,
 	MessageListResult,
 	ProtonBridgeConfig,
@@ -182,97 +184,26 @@ async function resolveProtonMailActiveProfile(
 	return profiles.find((profile) => profile.profile === activeProfile) ?? profiles[0];
 }
 
-async function runHelper<T>(
-	cwd: string,
-	action: string,
-	payload: Record<string, unknown>,
-): Promise<T> {
-	const helperPath = fileURLToPath(new URL("../helpers/proton_bridge.py", import.meta.url));
-	return new Promise<T>((resolvePromise, reject) => {
-		const child = spawn("python3", [helperPath, action], {
-			cwd,
-			stdio: ["pipe", "pipe", "pipe"],
-		});
-		let stdout = "";
-		let stderr = "";
-
-		child.stdout.on("data", (chunk: Buffer | string) => {
-			stdout += chunk.toString();
-		});
-		child.stderr.on("data", (chunk: Buffer | string) => {
-			stderr += chunk.toString();
-		});
-		child.on("error", (error: Error) => reject(error));
-		child.on("close", (code: number | null) => {
-			if (code !== 0 && !stdout.trim()) {
-				reject(new Error(stderr.trim() || `Proton Bridge helper exited with code ${code}`));
-				return;
-			}
-
-			let parsed: HelperSuccess<T> | HelperFailure;
-			try {
-				parsed = JSON.parse(stdout) as HelperSuccess<T> | HelperFailure;
-			} catch (error) {
-				reject(
-					new Error(
-						`Failed to parse Proton Bridge helper output. ${stderr.trim()} ${error instanceof Error ? error.message : String(error)}`.trim(),
-					),
-				);
-				return;
-			}
-
-			if (!parsed.ok) {
-				reject(new Error(parsed.error || stderr.trim() || "Proton Bridge helper failed."));
-				return;
-			}
-			resolvePromise(parsed.result);
-		});
-
-		child.stdin.end(JSON.stringify(payload));
-	});
-}
-
 async function protonBridgeStatus(
-	cwd: string,
+	_cwd: string,
 	defaultMailbox?: string,
 ): Promise<BridgeStatusResult> {
 	const config = await getProtonBridgeConfig(defaultMailbox);
-	return runHelper<BridgeStatusResult>(cwd, "status", {
-		config: {
-			host: config.host,
-			imap_port: config.imapPort,
-			smtp_port: config.smtpPort,
-			username: config.username,
-			password: config.password,
-			security: config.security,
-			default_mailbox: config.defaultMailbox,
-		},
-	});
+	return runProtonBridgeStatus(config);
 }
 
 async function listProtonMailboxes(
-	cwd: string,
+	_cwd: string,
 	query?: string,
 	defaultMailbox?: string,
 ): Promise<MailboxListResult> {
 	const config = await getProtonBridgeConfig(defaultMailbox);
 	if (!config.username || !config.password) throw new Error(protonMailSetupHint(defaultMailbox));
-	return runHelper<MailboxListResult>(cwd, "list-mailboxes", {
-		config: {
-			host: config.host,
-			imap_port: config.imapPort,
-			smtp_port: config.smtpPort,
-			username: config.username,
-			password: config.password,
-			security: config.security,
-			default_mailbox: config.defaultMailbox,
-		},
-		query,
-	});
+	return runProtonBridgeListMailboxes(config, query);
 }
 
 async function listProtonMessages(
-	cwd: string,
+	_cwd: string,
 	mailbox?: string,
 	period?: string,
 	query?: string,
@@ -282,22 +213,7 @@ async function listProtonMessages(
 ): Promise<MessageListResult> {
 	const config = await getProtonBridgeConfig(defaultMailbox);
 	if (!config.username || !config.password) throw new Error(protonMailSetupHint(defaultMailbox));
-	return runHelper<MessageListResult>(cwd, "list-messages", {
-		config: {
-			host: config.host,
-			imap_port: config.imapPort,
-			smtp_port: config.smtpPort,
-			username: config.username,
-			password: config.password,
-			security: config.security,
-			default_mailbox: config.defaultMailbox,
-		},
-		mailbox,
-		period,
-		query,
-		unseen_only: unseenOnly,
-		limit,
-	});
+	return runProtonBridgeListMessages(config, mailbox, period, query, unseenOnly, limit);
 }
 
 function formatStatusSummary(result: BridgeStatusResult): string {
@@ -678,48 +594,15 @@ export default function registerProtonBridgeExtension(pi: ExtensionAPI) {
 				profile.profile,
 				params.workspaceRoot || profile.policy.import_workspace_root,
 			);
-			const result = await runHelper<{
-				workspace_root: string;
-				period_root: string;
-				mail_root: string;
-				inbox_root: string;
-				mailbox: string;
-				profile: string;
-				message_count: number;
-				attachment_count: number;
-				messages: Array<{
-					uid: string;
-					subject?: string;
-					from?: string;
-					date?: string;
-					raw_path: string;
-					attachment_count: number;
-					attachments: Array<{
-						filename: string;
-						mail_path: string;
-						inbox_path: string;
-						content_type?: string;
-						size?: number;
-					}>;
-				}>;
-			}>(ctx.cwd, "import-attachments", {
+			const result = await runProtonBridgeImportAttachments(config, {
 				cwd: ctx.cwd,
-				profile: profile.profile,
-				workspace_root: workspaceRoot,
-				config: {
-					host: config.host,
-					imap_port: config.imapPort,
-					smtp_port: config.smtpPort,
-					username: config.username,
-					password: config.password,
-					security: config.security,
-					default_mailbox: config.defaultMailbox,
-				},
-				mailbox: params.mailbox,
+				workspaceRoot,
 				period: resolvedPeriod,
+				mailbox: params.mailbox,
+				profile: profile.profile,
 				query,
-				unseen_only: params.unseenOnly ?? false,
-				mark_seen: params.markSeen ?? false,
+				unseenOnly: params.unseenOnly ?? false,
+				markSeen: params.markSeen ?? false,
 				limit: params.limit ?? 100,
 			});
 			return {

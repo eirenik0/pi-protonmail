@@ -27,16 +27,6 @@ export interface ProtonMailWorkingProfile {
 	policyPath: string;
 }
 
-export interface HelperSuccess<T> {
-	ok: true;
-	result: T;
-}
-
-export interface HelperFailure {
-	ok: false;
-	error: string;
-}
-
 export interface BridgeStatusResult {
 	config: {
 		host: string;
