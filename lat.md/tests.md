@@ -16,7 +16,7 @@ Message summaries should include UID, sender, subject, date, and attachment name
 
 ## TUI navigation
 
-The Proton Mail TUI should keep mailbox/month context while users navigate, refresh, or exit, and it should stay framed and readable like the ZenMoney hub.
+The Proton Mail setup hub should let users choose a profile, edit its defaults, and save or delete it without losing the active selection. It should stay framed and readable like the ZenMoney hub.
 
 ## Secret resolution
 

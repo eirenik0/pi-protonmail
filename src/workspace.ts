@@ -1,5 +1,5 @@
 import { promises as fs } from "node:fs";
-import { dirname, isAbsolute, join, normalize } from "node:path";
+import { dirname, join } from "node:path";
 
 import type { ProtonMailProfilePolicy, ProtonMailWorkspaceConfig } from "./types.ts";
 
@@ -30,20 +30,6 @@ export function protonMailProfileDir(profile: string, baseDir = ""): string {
 
 export function protonMailProfilePolicyPath(profile: string, baseDir = ""): string {
 	return join(protonMailProfileDir(profile, baseDir), "policy.json");
-}
-
-export function normalizeProtonMailMailboxPath(pathValue: string, label: string): string {
-	const trimmed = pathValue.trim();
-	if (!trimmed) throw new Error(`${label} must not be empty.`);
-	if (isAbsolute(trimmed)) {
-		throw new Error(`${label} must be relative to the working files folder.`);
-	}
-	const normalized = normalize(trimmed).replaceAll("\\", "/");
-	if (!normalized || normalized === ".") throw new Error(`${label} must not be empty.`);
-	if (normalized.split("/").some((segment) => segment === "..")) {
-		throw new Error(`${label} must not escape the working files folder.`);
-	}
-	return normalized;
 }
 
 async function readJsonObject<T>(path: string): Promise<T | undefined> {

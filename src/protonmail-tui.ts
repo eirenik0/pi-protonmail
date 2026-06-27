@@ -3,33 +3,31 @@ import { getMarkdownTheme } from "@earendil-works/pi-coding-agent";
 import type { Theme } from "@earendil-works/pi-tui";
 import {
 	type Component,
-	Container,
 	type Focusable,
 	Input,
 	Markdown,
 	matchesKey,
 	SelectList,
-	Spacer,
 	Text,
+	truncateToWidth,
 	visibleWidth,
 } from "@earendil-works/pi-tui";
 
-import type {
-	BridgeStatusResult,
-	MailboxListResult,
-	MessageInfo,
-	MessageListResult,
-} from "./types.ts";
+import type { ProtonMailProfilePolicy, ProtonMailWorkingProfile } from "./types.ts";
 
-export interface ProtonMailHubLoaders {
-	status(cwd: string): Promise<BridgeStatusResult>;
-	mailboxes(cwd: string): Promise<MailboxListResult>;
-	messages(cwd: string, mailbox: string, period: string): Promise<MessageListResult>;
-}
+export type ProtonMailHubResult =
+	| {
+			kind: "save";
+			profile: string;
+			policy: ProtonMailProfilePolicy;
+	  }
+	| {
+			kind: "delete";
+			profile: string;
+	  };
 
 export interface ProtonMailHubArgs {
-	mailbox?: string;
-	period?: string;
+	profile?: string;
 }
 
 const MONTH_RE = /^\d{4}-\d{2}$/;
@@ -41,12 +39,8 @@ function currentMonth(): string {
 }
 
 function parseHubArgs(raw: string): ProtonMailHubArgs {
-	const parts = raw.trim().split(/\s+/).filter(Boolean);
-	if (parts.length === 0) return {};
-	const last = parts.at(-1);
-	const period = last && MONTH_RE.test(last) ? last : undefined;
-	const mailbox = (period ? parts.slice(0, -1) : parts).join(" ").trim() || undefined;
-	return { mailbox, period };
+	const profile = raw.trim().split(/\s+/).filter(Boolean)[0];
+	return { profile: profile || undefined };
 }
 
 function selectTheme(theme: Theme) {
@@ -59,78 +53,17 @@ function selectTheme(theme: Theme) {
 	};
 }
 
-function statusMarkdown(result?: BridgeStatusResult, error?: string): string {
-	if (error) {
-		return `# Proton Mail Bridge\n\n- ${error}`;
-	}
-	if (!result) return "# Proton Mail Bridge\n\nLoading status…";
-	const lines = [
-		"# Proton Mail Bridge",
-		"",
-		`- Host: \`${result.config.host}\``,
-		`- IMAP: \`${result.config.imap_port}\` (${result.imap.open ? "open" : "closed"})`,
-		`- SMTP: \`${result.config.smtp_port}\` (${result.smtp.open ? "open" : "closed"})`,
-		`- Security: \`${result.config.security}\``,
-		`- Default mailbox: ${result.config.default_mailbox ? `\`${result.config.default_mailbox}\`` : "—"}`,
-		`- Credentials: ${result.config.username_set && result.config.password_set ? "configured" : "missing"}`,
+function policySummary(policy: ProtonMailProfilePolicy): string {
+	const parts = [
+		policy.default_mailbox ? `mailbox:${policy.default_mailbox}` : "mailbox:—",
+		policy.mailbox_filter ? `filter:${policy.mailbox_filter}` : "filter:—",
+		policy.default_period ? `period:${policy.default_period}` : "period:current",
 	];
-	if (result.login) {
-		lines.push(
-			"",
-			"## Login",
-			result.login.ok
-				? `- ok • ${result.login.mailbox_count ?? 0} mailboxes visible`
-				: `- failed • ${result.login.error ?? "unknown error"}`,
-		);
-	}
-	return lines.join("\n");
+	return parts.join(" • ");
 }
 
-function mailboxLabel(mailbox: { name: string; flags?: string[]; raw?: string }) {
-	const flags = mailbox.flags?.length ? ` (${mailbox.flags.join(", ")})` : "";
-	return `${mailbox.name}${flags}`;
-}
-
-function messageLabel(message: MessageInfo) {
-	return `${message.subject ?? "(no subject)"} — ${message.from ?? "unknown sender"}`;
-}
-
-function messageDescription(message: MessageInfo) {
-	const attachments = message.attachments.length
-		? `${message.attachments.length} attachment(s)`
-		: "no attachments";
-	return `${message.date ?? "unknown date"} • ${attachments} • UID ${message.uid}`;
-}
-
-function messageMarkdown(message?: MessageInfo, mailbox?: string, period?: string): string {
-	if (!message) {
-		return [
-			"# Message detail",
-			"",
-			`Select a message in ${mailbox ?? "the current mailbox"}${period ? ` for ${period}` : ""}.`,
-		].join("\n");
-	}
-	const attachments =
-		message.attachments.length > 0
-			? message.attachments
-					.map(
-						(attachment) =>
-							`- ${attachment.filename}${attachment.size ? ` (${attachment.size} bytes)` : ""}`,
-					)
-					.join("\n")
-			: "- none";
-	return [
-		"# Message detail",
-		"",
-		`- UID: \`${message.uid}\``,
-		`- From: ${message.from ?? "—"}`,
-		`- Subject: ${message.subject ?? "—"}`,
-		`- Date: ${message.date ?? "—"}`,
-		`- Attachments: ${message.attachment_count}`,
-		"",
-		"## Attachments",
-		attachments,
-	].join("\n");
+function profileLabel(profile: ProtonMailWorkingProfile): string {
+	return profile.profile;
 }
 
 function makeSelectItem(value: string, label: string, description?: string) {
@@ -155,15 +88,19 @@ function selectedItemValue(list: SelectList): string | undefined {
 	return list.getSelectedItem()?.value;
 }
 
+function normalized(text: string): string {
+	return text.trim().toLowerCase();
+}
+
 class ProtonMailHubComponent implements Component, Focusable {
-	private readonly root = new Container();
 	private readonly mdTheme = getMarkdownTheme();
+	private readonly profileFilterInput = new Input();
+	private readonly defaultMailboxInput = new Input();
 	private readonly mailboxFilterInput = new Input();
 	private readonly periodInput = new Input();
-	private readonly mailboxList: SelectList;
-	private readonly messageList: SelectList;
-	private readonly statusText: Markdown;
-	private readonly messageText: Markdown;
+	private readonly profilesList: SelectList;
+	private readonly titleText: Markdown;
+	private readonly helpText: Markdown;
 	private readonly footerText: Text;
 	private readonly theme: Theme;
 	private _focused = false;
@@ -174,126 +111,266 @@ class ProtonMailHubComponent implements Component, Focusable {
 		this._focused = value;
 		this.updateFocusState();
 	}
-	private focusMode: "mailbox-filter" | "mailboxes" | "period" | "messages" = "mailbox-filter";
-	private loadToken = 0;
-	private mailboxLoadToken = 0;
-	private messageLoadToken = 0;
-	private status?: BridgeStatusResult;
-	private messages: MessageListResult = { mailbox: "", count: 0, messages: [] };
-	private activeMailbox?: string;
-	private activePeriod: string;
+	private focusMode:
+		| "profile-filter"
+		| "profiles"
+		| "default-mailbox"
+		| "mailbox-filter"
+		| "period" = "profile-filter";
+	private profiles: ProtonMailWorkingProfile[];
+	private activeProfile: string;
+	private errorMessage = "";
 
 	constructor(
 		private readonly tui: { requestRender(): void },
 		theme: Theme,
-		private readonly done: (value: null) => void,
-		private readonly ctx: Pick<ExtensionCommandContext, "cwd">,
-		private readonly loaders: ProtonMailHubLoaders,
-		initial: ProtonMailHubArgs,
+		private readonly done: (value: ProtonMailHubResult | null) => void,
+		profiles: ProtonMailWorkingProfile[],
+		initialProfile?: string,
 	) {
 		this.theme = theme;
-		this.activePeriod = initial.period ?? currentMonth();
-		this.statusText = new Markdown(statusMarkdown(), 0, 0, this.mdTheme);
-		this.mailboxList = new SelectList([], 6, selectTheme(theme));
-		this.messageList = new SelectList([], 8, selectTheme(theme));
-		this.messageText = new Markdown(
-			messageMarkdown(undefined, undefined, this.activePeriod),
+		this.profiles = profiles.length > 0 ? [...profiles] : [this.createSyntheticDefaultProfile()];
+		this.activeProfile = this.resolveInitialProfile(initialProfile);
+		this.profilesList = new SelectList([], 6, selectTheme(theme));
+		this.titleText = new Markdown(
+			[
+				"# Proton Mail Settings Hub",
+				"",
+				"Configure profiles for later LLM workflows instead of browsing mail here.",
+			].join("\n"),
+			0,
+			0,
+			this.mdTheme,
+		);
+		this.helpText = new Markdown(
+			[
+				"# What this saves",
+				"",
+				"- active profile",
+				"- default mailbox",
+				"- mailbox filter",
+				"- default period",
+			].join("\n"),
 			0,
 			0,
 			this.mdTheme,
 		);
 		this.footerText = new Text(
-			"Tab cycles • Enter loads/steps forward • Esc clears or exits • Ctrl+C exits • Ctrl+R refreshes",
+			"Tab cycles • Enter creates/saves • Ctrl+S saves • Ctrl+D deletes • Esc clears/back",
 			0,
 			0,
 		);
 
-		this.mailboxFilterInput.setValue(initial.mailbox ?? "");
-		this.periodInput.setValue(this.activePeriod);
-		this.mailboxFilterInput.onSubmit = () => {
-			this.focusMode = "mailboxes";
+		this.profileFilterInput.setValue(initialProfile ?? this.activeProfile);
+		this.loadProfileIntoInputs(this.currentProfile());
+
+		this.profileFilterInput.onSubmit = () => {
+			const next = this.profileFilterInput.getValue().trim();
+			if (!next) {
+				this.focusMode = "profiles";
+				this.updateFocusState();
+				this.refresh();
+				return;
+			}
+			this.selectOrCreateProfile(next);
+			this.focusMode = "default-mailbox";
 			this.updateFocusState();
 			this.refresh();
 		};
-		this.mailboxFilterInput.onEscape = () => {
-			if (this.mailboxFilterInput.getValue()) {
-				this.mailboxFilterInput.setValue("");
-				this.applyMailboxFilter();
+		this.profileFilterInput.onEscape = () => {
+			if (this.profileFilterInput.getValue()) {
+				this.profileFilterInput.setValue("");
+				this.applyProfileFilter();
 				return;
 			}
 			this.done(null);
 		};
-		this.periodInput.onSubmit = () => {
-			const next = this.parsePeriod(this.periodInput.getValue()) ?? this.activePeriod;
-			this.activePeriod = next;
-			this.periodInput.setValue(next);
-			void this.loadMessagesForSelection();
-			this.focusMode = "messages";
+
+		this.defaultMailboxInput.onSubmit = () => {
+			this.focusMode = "mailbox-filter";
 			this.updateFocusState();
 			this.refresh();
 		};
-		this.periodInput.onEscape = () => {
-			if (this.periodInput.getValue() !== this.activePeriod) {
-				this.periodInput.setValue(this.activePeriod);
+		this.defaultMailboxInput.onEscape = () => {
+			if (this.defaultMailboxInput.getValue() !== this.currentPolicy().default_mailbox) {
+				this.defaultMailboxInput.setValue(this.currentPolicy().default_mailbox ?? "");
 				return;
 			}
-			this.focusMode = "mailboxes";
+			this.focusMode = "profiles";
 			this.updateFocusState();
 			this.refresh();
 		};
 
-		this.mailboxList.onSelectionChange = (item) => {
-			this.activeMailbox = item.value;
-			void this.loadMessagesForSelection();
-		};
-		this.mailboxList.onSelect = (item) => {
-			this.activeMailbox = item.value;
+		this.mailboxFilterInput.onSubmit = () => {
 			this.focusMode = "period";
 			this.updateFocusState();
-			void this.loadMessagesForSelection();
+			this.refresh();
 		};
-		this.mailboxList.onCancel = () => {
+		this.mailboxFilterInput.onEscape = () => {
+			if (this.mailboxFilterInput.getValue() !== this.currentPolicy().mailbox_filter) {
+				this.mailboxFilterInput.setValue(this.currentPolicy().mailbox_filter ?? "");
+				return;
+			}
+			this.focusMode = "default-mailbox";
+			this.updateFocusState();
+			this.refresh();
+		};
+
+		this.periodInput.onSubmit = () => {
+			this.saveCurrentProfile();
+		};
+		this.periodInput.onEscape = () => {
+			if (this.periodInput.getValue() !== this.currentPolicy().default_period) {
+				this.periodInput.setValue(this.currentPolicy().default_period ?? currentMonth());
+				return;
+			}
 			this.focusMode = "mailbox-filter";
 			this.updateFocusState();
 			this.refresh();
 		};
 
-		this.messageList.onSelectionChange = (item) => {
-			const selected = this.messages.messages.find((message) => message.uid === item.value);
-			this.messageText.setText(messageMarkdown(selected, this.activeMailbox, this.activePeriod));
-			this.refresh();
+		this.profilesList.onSelectionChange = (item) => {
+			this.selectProfile(item.value);
 		};
-		this.messageList.onSelect = () => {
-			this.focusMode = "messages";
+		this.profilesList.onSelect = (item) => {
+			this.selectProfile(item.value);
+			this.focusMode = "default-mailbox";
 			this.updateFocusState();
 			this.refresh();
 		};
-		this.messageList.onCancel = () => {
-			this.focusMode = "period";
+		this.profilesList.onCancel = () => {
+			this.focusMode = "profile-filter";
 			this.updateFocusState();
 			this.refresh();
 		};
 
-		this.root.addChild(new Text("Proton Mail TUI", 0, 0));
-		this.root.addChild(new Spacer(1));
-		this.root.addChild(this.statusText);
-		this.root.addChild(new Spacer(1));
-		this.root.addChild(new Text("Mailbox filter", 0, 0));
-		this.root.addChild(this.mailboxFilterInput);
-		this.root.addChild(this.mailboxList);
-		this.root.addChild(new Spacer(1));
-		this.root.addChild(new Text("Period (YYYY-MM)", 0, 0));
-		this.root.addChild(this.periodInput);
-		this.root.addChild(new Spacer(1));
-		this.root.addChild(new Text("Messages", 0, 0));
-		this.root.addChild(this.messageList);
-		this.root.addChild(new Spacer(1));
-		this.root.addChild(this.messageText);
-		this.root.addChild(new Spacer(1));
-		this.root.addChild(this.footerText);
-
+		this.applyProfileFilter();
 		this.updateFocusState();
-		void this.bootstrap(initial.mailbox);
+	}
+
+	private createSyntheticDefaultProfile(): ProtonMailWorkingProfile {
+		return {
+			profile: "default",
+			policy: {},
+			policyPath: ".pi/protonmail/profiles/default/policy.json",
+		};
+	}
+
+	private resolveInitialProfile(initialProfile?: string): string {
+		if (initialProfile?.trim()) {
+			const normalizedInitial = normalized(initialProfile);
+			if (this.profiles.some((profile) => profile.profile === normalizedInitial))
+				return normalizedInitial;
+			return normalizedInitial;
+		}
+		return this.profiles[0]?.profile ?? "default";
+	}
+
+	private currentProfile(): ProtonMailWorkingProfile {
+		return (
+			this.profiles.find((profile) => profile.profile === this.activeProfile) ?? this.profiles[0]
+		);
+	}
+
+	private currentPolicy(): ProtonMailProfilePolicy {
+		return this.currentProfile()?.policy ?? {};
+	}
+
+	private loadProfileIntoInputs(profile?: ProtonMailWorkingProfile): void {
+		const current = profile ?? this.currentProfile();
+		this.defaultMailboxInput.setValue(current.policy.default_mailbox ?? "");
+		this.mailboxFilterInput.setValue(current.policy.mailbox_filter ?? "");
+		this.periodInput.setValue(current.policy.default_period ?? currentMonth());
+	}
+
+	private profileMatchesQuery(profile: ProtonMailWorkingProfile, query: string): boolean {
+		const needle = normalized(query);
+		if (!needle) return true;
+		return [
+			profile.profile,
+			profile.policy.default_mailbox ?? "",
+			profile.policy.mailbox_filter ?? "",
+			profile.policy.default_period ?? "",
+		].some((value) => normalized(value).includes(needle));
+	}
+
+	private filteredProfiles(): ProtonMailWorkingProfile[] {
+		const query = this.profileFilterInput.getValue().trim();
+		if (!query) return this.profiles;
+		return this.profiles.filter((profile) => this.profileMatchesQuery(profile, query));
+	}
+
+	private applyProfileFilter(): void {
+		const filter = this.profileFilterInput.getValue().trim().toLowerCase();
+		const visible = this.filteredProfiles();
+		replaceSelectItems(
+			this.profilesList,
+			visible.map((profile) =>
+				makeSelectItem(profile.profile, profileLabel(profile), policySummary(profile.policy)),
+			),
+		);
+		this.profilesList.setFilter(filter);
+		this.activeProfile = selectedItemValue(this.profilesList) ?? this.activeProfile;
+		this.refresh();
+	}
+
+	private selectProfile(profileName: string): void {
+		const profile = this.profiles.find((entry) => entry.profile === profileName);
+		if (!profile) return;
+		this.activeProfile = profile.profile;
+		this.loadProfileIntoInputs(profile);
+		this.applyProfileFilter();
+	}
+
+	private selectOrCreateProfile(value: string): void {
+		const profileName = normalized(value);
+		if (!profileName) return;
+		const existing = this.profiles.find((profile) => profile.profile === profileName);
+		if (existing) {
+			this.selectProfile(existing.profile);
+			return;
+		}
+		const next: ProtonMailWorkingProfile = {
+			profile: profileName,
+			policy: {},
+			policyPath: `.pi/protonmail/profiles/${profileName}/policy.json`,
+		};
+		this.profiles = [...this.profiles, next].sort((left, right) =>
+			left.profile.localeCompare(right.profile),
+		);
+		this.activeProfile = next.profile;
+		this.loadProfileIntoInputs(next);
+		this.applyProfileFilter();
+	}
+
+	private currentPolicyFromInputs(): ProtonMailProfilePolicy {
+		const default_period = this.periodInput.getValue().trim();
+		return {
+			default_mailbox: this.defaultMailboxInput.getValue().trim() || undefined,
+			mailbox_filter: this.mailboxFilterInput.getValue().trim() || undefined,
+			default_period: default_period
+				? MONTH_RE.test(default_period)
+					? default_period
+					: undefined
+				: undefined,
+		};
+	}
+
+	private saveCurrentProfile(): void {
+		const profile = this.currentProfile();
+		if (!profile) return;
+		this.done({ kind: "save", profile: profile.profile, policy: this.currentPolicyFromInputs() });
+	}
+
+	private deleteCurrentProfile(): void {
+		const profile = this.currentProfile();
+		if (!profile) return;
+		if (profile.profile === "default") {
+			this.errorMessage = "The default profile cannot be deleted.";
+			this.refresh();
+			return;
+		}
+		this.done({ kind: "delete", profile: profile.profile });
 	}
 
 	private refresh(): void {
@@ -302,144 +379,21 @@ class ProtonMailHubComponent implements Component, Focusable {
 
 	private updateFocusState(): void {
 		const active = this._focused;
+		this.profileFilterInput.focused = active && this.focusMode === "profile-filter";
+		this.defaultMailboxInput.focused = active && this.focusMode === "default-mailbox";
 		this.mailboxFilterInput.focused = active && this.focusMode === "mailbox-filter";
 		this.periodInput.focused = active && this.focusMode === "period";
 	}
 
-	private parsePeriod(value: string): string | undefined {
-		const trimmed = value.trim();
-		return /^\d{4}-\d{2}$/.test(trimmed) ? trimmed : undefined;
-	}
-
-	private applyMailboxFilter(): void {
-		const filter = this.mailboxFilterInput.getValue().trim().toLowerCase();
-		this.mailboxList.setFilter(filter);
-		this.activeMailbox = selectedItemValue(this.mailboxList);
-		void this.loadMessagesForSelection();
-		this.refresh();
-	}
-
-	private setMailboxItems(result: MailboxListResult): void {
-		replaceSelectItems(
-			this.mailboxList,
-			result.mailboxes.map((mailbox) =>
-				makeSelectItem(
-					mailbox.name,
-					mailboxLabel(mailbox),
-					mailbox.flags?.length ? mailbox.flags.join(", ") : mailbox.raw,
-				),
-			),
-		);
-		this.mailboxList.setFilter(this.mailboxFilterInput.getValue().trim().toLowerCase());
-		this.activeMailbox = selectedItemValue(this.mailboxList) ?? this.activeMailbox;
-		this.refresh();
-	}
-
-	private setMessageItems(result: MessageListResult): void {
-		this.messages = result;
-		replaceSelectItems(
-			this.messageList,
-			result.messages.map((message) =>
-				makeSelectItem(message.uid, messageLabel(message), messageDescription(message)),
-			),
-		);
-		const selected = this.messageList.getSelectedItem();
-		this.messageText.setText(
-			messageMarkdown(
-				selected
-					? this.messages.messages.find((message) => message.uid === selected.value)
-					: undefined,
-				this.activeMailbox,
-				this.activePeriod,
-			),
-		);
-		this.refresh();
-	}
-
-	private async bootstrap(initialMailbox?: string): Promise<void> {
-		const token = ++this.loadToken;
-		try {
-			this.statusText.setText("# Proton Mail Bridge\n\nLoading status…");
-			this.status = await this.loaders.status(this.ctx.cwd);
-			if (token !== this.loadToken) return;
-			this.statusText.setText(statusMarkdown(this.status));
-		} catch (error) {
-			if (token !== this.loadToken) return;
-			const statusError = error instanceof Error ? error.message : String(error);
-			this.statusText.setText(statusMarkdown(undefined, statusError));
-		}
-
-		try {
-			const mailboxToken = ++this.mailboxLoadToken;
-			const mailboxes = await this.loaders.mailboxes(this.ctx.cwd);
-			if (mailboxToken !== this.mailboxLoadToken) return;
-			this.setMailboxItems(mailboxes);
-			const preferred =
-				initialMailbox && mailboxes.mailboxes.some((mailbox) => mailbox.name === initialMailbox)
-					? initialMailbox
-					: this.status?.config.default_mailbox &&
-							mailboxes.mailboxes.some(
-								(mailbox) => mailbox.name === this.status?.config.default_mailbox,
-							)
-						? this.status?.config.default_mailbox
-						: mailboxes.mailboxes[0]?.name;
-			if (preferred) {
-				this.activeMailbox = preferred;
-				this.mailboxList.setSelectedIndex(
-					mailboxes.mailboxes.findIndex((mailbox) => mailbox.name === preferred),
-				);
-			}
-			if (initialMailbox) {
-				this.applyMailboxFilter();
-				if (!selectedItemValue(this.mailboxList) && preferred) {
-					this.activeMailbox = preferred;
-					this.mailboxList.setSelectedIndex(
-						mailboxes.mailboxes.findIndex((mailbox) => mailbox.name === preferred),
-					);
-					void this.loadMessagesForSelection();
-				}
-			} else {
-				void this.loadMessagesForSelection();
-			}
-		} catch (error) {
-			if (token !== this.loadToken) return;
-			this.statusText.setText(
-				statusMarkdown(this.status, error instanceof Error ? error.message : String(error)),
-			);
-			this.messageText.setText(messageMarkdown(undefined, this.activeMailbox, this.activePeriod));
-		}
-	}
-
-	private async loadMessagesForSelection(): Promise<void> {
-		const mailbox = this.activeMailbox ?? selectedItemValue(this.mailboxList);
-		const period = this.parsePeriod(this.periodInput.getValue()) ?? this.activePeriod;
-		this.activePeriod = period;
-		this.periodInput.setValue(period);
-		if (!mailbox) {
-			replaceSelectItems(this.messageList, []);
-			this.messageText.setText(messageMarkdown(undefined, undefined, period));
-			this.refresh();
-			return;
-		}
-		const token = ++this.messageLoadToken;
-		try {
-			const result = await this.loaders.messages(this.ctx.cwd, mailbox, period);
-			if (token !== this.messageLoadToken) return;
-			this.setMessageItems(result);
-		} catch (error) {
-			if (token !== this.messageLoadToken) return;
-			this.messages = { mailbox, count: 0, messages: [] };
-			replaceSelectItems(this.messageList, []);
-			this.messageText.setText(
-				messageMarkdown(undefined, mailbox, period) +
-					`\n\n> ${error instanceof Error ? error.message : String(error)}`,
-			);
-			this.refresh();
-		}
-	}
-
 	invalidate(): void {
-		this.root.invalidate();
+		this.profileFilterInput.invalidate();
+		this.defaultMailboxInput.invalidate();
+		this.mailboxFilterInput.invalidate();
+		this.periodInput.invalidate();
+		this.profilesList.invalidate();
+		this.titleText.invalidate();
+		this.helpText.invalidate();
+		this.footerText.invalidate();
 	}
 
 	handleInput(data: string): void {
@@ -447,109 +401,124 @@ class ProtonMailHubComponent implements Component, Focusable {
 			this.done(null);
 			return;
 		}
+		if (matchesKey(data, "ctrl+s")) {
+			this.saveCurrentProfile();
+			return;
+		}
+		if (matchesKey(data, "ctrl+d")) {
+			this.deleteCurrentProfile();
+			return;
+		}
 		if (matchesKey(data, "escape")) {
-			if (this.focusMode === "mailbox-filter") {
-				if (this.mailboxFilterInput.getValue()) {
-					this.mailboxFilterInput.setValue("");
-					this.applyMailboxFilter();
+			if (this.focusMode === "profile-filter") {
+				if (this.profileFilterInput.getValue()) {
+					this.profileFilterInput.setValue("");
+					this.applyProfileFilter();
 					return;
 				}
 				this.done(null);
 				return;
 			}
 			if (this.focusMode === "period") {
-				if (this.periodInput.getValue() !== this.activePeriod) {
-					this.periodInput.setValue(this.activePeriod);
+				if (
+					this.periodInput.getValue() !== (this.currentPolicy().default_period ?? currentMonth())
+				) {
+					this.periodInput.setValue(this.currentPolicy().default_period ?? currentMonth());
 					return;
 				}
-				this.focusMode = "mailboxes";
+				this.focusMode = "mailbox-filter";
 				this.updateFocusState();
 				this.refresh();
 				return;
 			}
-			if (this.focusMode === "messages") {
-				this.focusMode = "period";
+			if (this.focusMode === "mailbox-filter") {
+				if (this.mailboxFilterInput.getValue() !== (this.currentPolicy().mailbox_filter ?? "")) {
+					this.mailboxFilterInput.setValue(this.currentPolicy().mailbox_filter ?? "");
+					return;
+				}
+				this.focusMode = "default-mailbox";
 				this.updateFocusState();
 				this.refresh();
 				return;
 			}
-			this.focusMode = "mailbox-filter";
+			if (this.focusMode === "default-mailbox") {
+				if (this.defaultMailboxInput.getValue() !== (this.currentPolicy().default_mailbox ?? "")) {
+					this.defaultMailboxInput.setValue(this.currentPolicy().default_mailbox ?? "");
+					return;
+				}
+				this.focusMode = "profiles";
+				this.updateFocusState();
+				this.refresh();
+				return;
+			}
+			this.focusMode = "profile-filter";
 			this.updateFocusState();
 			this.refresh();
 			return;
 		}
 		if (matchesKey(data, "tab")) {
-			if (this.focusMode === "mailbox-filter") this.focusMode = "mailboxes";
-			else if (this.focusMode === "mailboxes") this.focusMode = "period";
-			else if (this.focusMode === "period") this.focusMode = "messages";
-			else this.focusMode = "mailbox-filter";
+			if (this.focusMode === "profile-filter") this.focusMode = "profiles";
+			else if (this.focusMode === "profiles") this.focusMode = "default-mailbox";
+			else if (this.focusMode === "default-mailbox") this.focusMode = "mailbox-filter";
+			else if (this.focusMode === "mailbox-filter") this.focusMode = "period";
+			else this.focusMode = "profile-filter";
 			this.updateFocusState();
 			this.refresh();
 			return;
 		}
-		if (matchesKey(data, "ctrl+r")) {
-			void this.bootstrap(this.activeMailbox);
+		if (this.focusMode === "profile-filter") {
+			this.profileFilterInput.handleInput(data);
+			this.applyProfileFilter();
 			return;
 		}
-
+		if (this.focusMode === "default-mailbox") {
+			this.defaultMailboxInput.handleInput(data);
+			this.refresh();
+			return;
+		}
 		if (this.focusMode === "mailbox-filter") {
 			this.mailboxFilterInput.handleInput(data);
-			this.applyMailboxFilter();
+			this.refresh();
 			return;
 		}
 		if (this.focusMode === "period") {
 			this.periodInput.handleInput(data);
+			this.refresh();
 			return;
 		}
-		if (this.focusMode === "mailboxes") {
-			this.mailboxList.handleInput(data);
-			return;
-		}
-		this.messageList.handleInput(data);
+		this.profilesList.handleInput(data);
 	}
 
 	render(width: number): string[] {
 		const innerWidth = Math.max(30, width - 2);
 		const border = (value: string) => this.theme.fg("border", value);
 		const padLine = (content: string) => {
-			const pad = Math.max(0, innerWidth - visibleWidth(content));
-			return `${border("│")}${content}${" ".repeat(pad)}${border("│")}`;
+			const clipped = truncateToWidth(content, innerWidth, "", false);
+			const pad = Math.max(0, innerWidth - visibleWidth(clipped));
+			return `${border("│")}${clipped}${" ".repeat(pad)}${border("│")}`;
 		};
 		const section = (title: string) => [
 			border(`├${"─".repeat(innerWidth)}┤`),
 			padLine(this.theme.fg("accent", ` ${title}`)),
 		];
 		const lines: string[] = [border(`╭${"─".repeat(innerWidth)}╮`)];
-		lines.push(padLine(this.theme.fg("accent", " Proton Mail TUI")));
-		lines.push(
-			padLine(
-				this.theme.fg(
-					"dim",
-					" Mailbox filter • period • messages • Tab cycles • Enter loads • Esc backs out • Ctrl+C exits • Ctrl+R refreshes",
-				),
-			),
-		);
-		lines.push(...section("Bridge status"));
-		for (const line of this.statusText.render(innerWidth)) lines.push(padLine(line));
+		lines.push(...section("Proton Mail"));
+		for (const line of this.titleText.render(innerWidth)) lines.push(padLine(line));
+		lines.push(padLine(this.theme.fg("dim", ` Active profile: ${this.activeProfile}`)));
+		lines.push(...section("Profiles"));
+		for (const line of this.profileFilterInput.render(innerWidth)) lines.push(padLine(line));
+		for (const line of this.profilesList.render(innerWidth)) lines.push(padLine(line));
+		lines.push(...section("Default mailbox"));
+		for (const line of this.defaultMailboxInput.render(innerWidth)) lines.push(padLine(line));
 		lines.push(...section("Mailbox filter"));
 		for (const line of this.mailboxFilterInput.render(innerWidth)) lines.push(padLine(line));
-		lines.push(...section("Mailboxes"));
-		for (const line of this.mailboxList.render(innerWidth)) lines.push(padLine(line));
-		lines.push(...section("Period (YYYY-MM)"));
+		lines.push(...section("Default period"));
 		for (const line of this.periodInput.render(innerWidth)) lines.push(padLine(line));
-		lines.push(...section("Messages"));
-		for (const line of this.messageList.render(innerWidth)) lines.push(padLine(line));
-		lines.push(...section("Message detail"));
-		for (const line of this.messageText.render(innerWidth)) lines.push(padLine(line));
-		lines.push(...section("Status"));
-		lines.push(
-			padLine(
-				this.theme.fg(
-					"dim",
-					` Focus: ${this.focusMode} • Mailbox: ${this.activeMailbox ?? "—"} • Period: ${this.activePeriod}`,
-				),
-			),
-		);
+		lines.push(...section("LLM setup"));
+		for (const line of this.helpText.render(innerWidth)) lines.push(padLine(line));
+		if (this.errorMessage) {
+			lines.push(padLine(this.theme.fg("error", ` ${this.errorMessage}`)));
+		}
 		for (const line of this.footerText.render(innerWidth)) lines.push(padLine(line));
 		lines.push(border(`╰${"─".repeat(innerWidth)}╯`));
 		return lines;
@@ -558,17 +527,33 @@ class ProtonMailHubComponent implements Component, Focusable {
 
 export async function openProtonMailHub(
 	ctx: Pick<ExtensionCommandContext, "cwd" | "hasUI" | "ui">,
-	loaders: ProtonMailHubLoaders,
+	profiles: ProtonMailWorkingProfile[],
 	rawArgs: string,
-): Promise<void> {
+): Promise<ProtonMailHubResult | null> {
 	if (!ctx.hasUI) {
-		ctx.ui.notify("Proton Mail TUI requires interactive mode.", "warning");
-		return;
+		ctx.ui.notify("Proton Mail setup hub requires interactive mode.", "warning");
+		return null;
 	}
 	const args = parseHubArgs(rawArgs);
-	await ctx.ui.custom(
-		(tui, theme, _keybindings, done) =>
-			new ProtonMailHubComponent(tui, theme, done, ctx, loaders, args),
-		{ overlay: true, overlayOptions: { width: "92%", maxHeight: "92%" } },
-	);
+	return new Promise<ProtonMailHubResult | null>((resolve) => {
+		void ctx.ui
+			.custom(
+				(tui, theme, _keybindings, done) =>
+					new ProtonMailHubComponent(
+						tui,
+						theme,
+						(value) => {
+							done(value);
+							resolve(value);
+						},
+						profiles,
+						args.profile,
+					),
+				{ overlay: true, overlayOptions: { width: "92%", maxHeight: "92%" } },
+			)
+			.then(
+				() => resolve(null),
+				() => resolve(null),
+			);
+	});
 }

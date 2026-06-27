@@ -1,6 +1,6 @@
 # Proton Mail Bridge Pi extension
 
-This repo packages a Pi extension for Proton Bridge mailbox discovery, message previews, and an interactive TUI.
+This repo packages a Pi extension for Proton Bridge mailbox discovery, message previews, and a profile-based setup hub.
 
 ## Repository overview
 
@@ -11,7 +11,7 @@ This repo packages a Pi extension for Proton Bridge mailbox discovery, message p
 These files capture the extension surface and the Bridge data flow.
 
 - [[extension]] — commands, tools, and user-facing mail workflows.
-- [[data-workflows]] — environment variables, helper script contract, and mailbox-oriented config.
+- [[data-workflows]] — environment variables, helper script contract, and profile-oriented config.
 - [[tests]] — behaviors worth keeping stable as the mail workflow evolves.
 
 ## Source layout
@@ -28,7 +28,11 @@ Main implementation for command/tool registration, helper execution, and message
 
 ### `src/protonmail-tui.ts`
 
-Interactive Proton Mail TUI hub for browsing mailboxes, choosing a month, and previewing messages.
+Interactive Proton Mail setup hub for editing profile defaults before LLM workflows use them.
+
+### `src/workspace.ts`
+
+Filesystem helpers for `.pi/protonmail/` workspace config and per-profile policy files.
 
 ### `src/secret-refs.ts`
 

@@ -23,11 +23,14 @@ import type {
 	ToolContext,
 } from "./types.ts";
 import {
+	deleteProtonMailProfile,
 	listProtonMailProfiles,
 	normalizeProtonMailProfile,
 	protonMailProfilePolicyPath,
 	readProtonMailProfilePolicy,
 	readProtonMailWorkspaceConfig,
+	writeProtonMailProfilePolicy,
+	writeProtonMailWorkspaceConfig,
 } from "./workspace.ts";
 
 class ProtonCommandError extends Data.TaggedError("ProtonCommandError")<{
@@ -88,10 +91,6 @@ function trimText(text: string, maxLines = 120, maxChars = 12000): string {
 function parseMonthPeriod(value?: string): string | undefined {
 	if (!value) return undefined;
 	return /^\d{4}-\d{2}$/.test(value) ? value : undefined;
-}
-
-function protonBridgeSetupHint(profile?: string): string {
-	return protonMailSetupHint(profile);
 }
 
 async function getProtonBridgeConfig(defaultMailbox?: string): Promise<ProtonBridgeConfig> {
@@ -256,7 +255,7 @@ async function listProtonMailboxes(
 	defaultMailbox?: string,
 ): Promise<MailboxListResult> {
 	const config = await getProtonBridgeConfig(defaultMailbox);
-	if (!config.username || !config.password) throw new Error(protonBridgeSetupHint(defaultMailbox));
+	if (!config.username || !config.password) throw new Error(protonMailSetupHint(defaultMailbox));
 	return runHelper<MailboxListResult>(cwd, "list-mailboxes", {
 		config: {
 			host: config.host,
@@ -281,7 +280,7 @@ async function listProtonMessages(
 	defaultMailbox?: string,
 ): Promise<MessageListResult> {
 	const config = await getProtonBridgeConfig(defaultMailbox);
-	if (!config.username || !config.password) throw new Error(protonBridgeSetupHint(defaultMailbox));
+	if (!config.username || !config.password) throw new Error(protonMailSetupHint(defaultMailbox));
 	return runHelper<MessageListResult>(cwd, "list-messages", {
 		config: {
 			host: config.host,
@@ -334,7 +333,7 @@ function formatStatusSummary(result: BridgeStatusResult): string {
 	}
 
 	if (!result.config.username_set || !result.config.password_set) {
-		lines.push("", protonBridgeSetupHint());
+		lines.push("", protonMailSetupHint());
 	}
 
 	return lines.join("\n");
@@ -487,40 +486,35 @@ export default function registerProtonBridgeExtension(pi: ExtensionAPI) {
 	});
 
 	pi.registerCommand("protonmail", {
-		description: "Open an interactive Proton Mail TUI",
+		description: "Open the Proton Mail setup hub",
 		handler: async (args: string, ctx: CommandContext) =>
 			runProtonBoundary(
 				ctx,
 				Effect.gen(function* () {
-					const profile = yield* effectFromProtonPromise(() =>
+					const profiles = yield* effectFromProtonPromise(() =>
+						listProtonMailWorkingProfiles(ctx.cwd),
+					);
+					const activeProfile = yield* effectFromProtonPromise(() =>
 						resolveProtonMailActiveProfile(ctx.cwd),
 					);
-					const initialArgs = args.trim()
-						? args
-						: [profile.policy.default_mailbox, profile.policy.default_period]
-								.filter(Boolean)
-								.join(" ");
-					yield* effectFromProtonPromise(() =>
-						openProtonMailHub(
-							ctx,
-							{
-								status: (cwd) => protonBridgeStatus(cwd, profile.policy.default_mailbox),
-								mailboxes: (cwd, query) =>
-									listProtonMailboxes(cwd, query, profile.policy.default_mailbox),
-								messages: (cwd, mailbox, period) =>
-									listProtonMessages(
-										cwd,
-										mailbox,
-										period,
-										undefined,
-										false,
-										50,
-										profile.policy.default_mailbox,
-									),
-							},
-							initialArgs,
-						),
+					const initialArgs = args.trim() ? args : activeProfile.profile;
+					const result = yield* effectFromProtonPromise(() =>
+						openProtonMailHub(ctx, profiles, initialArgs),
 					);
+					if (!result) return;
+					yield* effectFromProtonPromise(async () => {
+						if (result.kind === "save") {
+							await writeProtonMailProfilePolicy(ctx.cwd, result.profile, result.policy);
+							await writeProtonMailWorkspaceConfig(ctx.cwd, { activeProfile: result.profile });
+							ctx.ui.notify(`Saved Proton Mail profile ${result.profile}`, "info");
+							return;
+						}
+						await deleteProtonMailProfile(ctx.cwd, result.profile);
+						const remaining = profiles.filter((profile) => profile.profile !== result.profile);
+						const fallback = remaining[0]?.profile ?? "default";
+						await writeProtonMailWorkspaceConfig(ctx.cwd, { activeProfile: fallback });
+						ctx.ui.notify(`Deleted Proton Mail profile ${result.profile}`, "info");
+					});
 				}),
 			),
 	});
