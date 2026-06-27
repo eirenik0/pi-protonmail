@@ -182,9 +182,8 @@ async function searchUids(
 	if (unseenOnly) search.seen = false;
 	else search.all = true;
 	Object.assign(search, monthSearch(period));
-	const uids = (await client.search(search as Record<string, unknown>, { uid: true })) as Array<
-		string | number
-	>;
+	const result = await client.search(search as Record<string, unknown>, { uid: true });
+	const uids = Array.isArray(result) ? result : [];
 	return uids.map((uid) => String(uid));
 }
 

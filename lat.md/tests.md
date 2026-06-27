@@ -14,6 +14,10 @@ Mailbox search should return only folders that match the query, with the count a
 
 Message summaries should include UID, sender, subject, date, and attachment names so users can confirm a mailbox contains the intended mail before opening it.
 
+### Handles empty searches
+
+Message listing should return an empty result for a mailbox or period with no matches instead of crashing when IMAP search returns no UIDs.
+
 ## TUI navigation
 
 The Proton Mail setup hub should preserve the active profile while users edit defaults.
