@@ -16,7 +16,7 @@ Message summaries should include UID, sender, subject, date, and attachment name
 
 ## TUI navigation
 
-The Proton Mail TUI should let users tab between filter inputs and lists, refresh the data, and back out with Escape or Ctrl+C without losing the currently selected mailbox or month.
+The Proton Mail TUI should keep mailbox/month context while users navigate, refresh, or exit, and it should stay framed and readable like the ZenMoney hub.
 
 ## Secret resolution
 

@@ -11,6 +11,7 @@ import {
 	SelectList,
 	Spacer,
 	Text,
+	visibleWidth,
 } from "@earendil-works/pi-tui";
 
 import type {
@@ -164,6 +165,7 @@ class ProtonMailHubComponent implements Component, Focusable {
 	private readonly statusText: Markdown;
 	private readonly messageText: Markdown;
 	private readonly footerText: Text;
+	private readonly theme: Theme;
 	private _focused = false;
 	get focused(): boolean {
 		return this._focused;
@@ -189,6 +191,7 @@ class ProtonMailHubComponent implements Component, Focusable {
 		private readonly loaders: ProtonMailHubLoaders,
 		initial: ProtonMailHubArgs,
 	) {
+		this.theme = theme;
 		this.activePeriod = initial.period ?? currentMonth();
 		this.statusText = new Markdown(statusMarkdown(), 0, 0, this.mdTheme);
 		this.mailboxList = new SelectList([], 6, selectTheme(theme));
@@ -506,7 +509,50 @@ class ProtonMailHubComponent implements Component, Focusable {
 	}
 
 	render(width: number): string[] {
-		return this.root.render(width);
+		const innerWidth = Math.max(30, width - 2);
+		const border = (value: string) => this.theme.fg("border", value);
+		const padLine = (content: string) => {
+			const pad = Math.max(0, innerWidth - visibleWidth(content));
+			return `${border("│")}${content}${" ".repeat(pad)}${border("│")}`;
+		};
+		const section = (title: string) => [
+			border(`├${"─".repeat(innerWidth)}┤`),
+			padLine(this.theme.fg("accent", ` ${title}`)),
+		];
+		const lines: string[] = [border(`╭${"─".repeat(innerWidth)}╮`)];
+		lines.push(padLine(this.theme.fg("accent", " Proton Mail TUI")));
+		lines.push(
+			padLine(
+				this.theme.fg(
+					"dim",
+					" Mailbox filter • period • messages • Tab cycles • Enter loads • Esc backs out • Ctrl+C exits • Ctrl+R refreshes",
+				),
+			),
+		);
+		lines.push(...section("Bridge status"));
+		for (const line of this.statusText.render(innerWidth)) lines.push(padLine(line));
+		lines.push(...section("Mailbox filter"));
+		for (const line of this.mailboxFilterInput.render(innerWidth)) lines.push(padLine(line));
+		lines.push(...section("Mailboxes"));
+		for (const line of this.mailboxList.render(innerWidth)) lines.push(padLine(line));
+		lines.push(...section("Period (YYYY-MM)"));
+		for (const line of this.periodInput.render(innerWidth)) lines.push(padLine(line));
+		lines.push(...section("Messages"));
+		for (const line of this.messageList.render(innerWidth)) lines.push(padLine(line));
+		lines.push(...section("Message detail"));
+		for (const line of this.messageText.render(innerWidth)) lines.push(padLine(line));
+		lines.push(...section("Status"));
+		lines.push(
+			padLine(
+				this.theme.fg(
+					"dim",
+					` Focus: ${this.focusMode} • Mailbox: ${this.activeMailbox ?? "—"} • Period: ${this.activePeriod}`,
+				),
+			),
+		);
+		for (const line of this.footerText.render(innerWidth)) lines.push(padLine(line));
+		lines.push(border(`╰${"─".repeat(innerWidth)}╯`));
+		return lines;
 	}
 }
 
