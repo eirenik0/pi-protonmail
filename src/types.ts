@@ -1,3 +1,5 @@
+import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
+
 export interface ProtonBridgeConfig {
 	host: string;
 	imapPort: number;
@@ -73,13 +75,7 @@ export interface MessageListResult {
 	messages: MessageInfo[];
 }
 
-export interface CommandContext {
-	cwd: string;
-	signal?: AbortSignal;
-	ui: {
-		notify(message: string, level: string): void;
-	};
-}
+export type CommandContext = Pick<ExtensionCommandContext, "cwd" | "hasUI" | "ui">;
 
 export interface ToolContext {
 	cwd: string;

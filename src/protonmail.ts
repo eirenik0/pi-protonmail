@@ -9,6 +9,7 @@ import { Data, Effect } from "effect";
 import { Type } from "typebox";
 
 import { PREVIEW_LINES } from "./constants.ts";
+import { openProtonMailHub } from "./protonmail-tui.ts";
 import { resolveSecretReference } from "./secret-refs.ts";
 import type {
 	BridgeStatusResult,
@@ -250,9 +251,9 @@ function formatStatusSummary(result: BridgeStatusResult): string {
 		lines.push("", "## Login check", "");
 		if (result.login.ok) {
 			lines.push(`- Login: ok`, `- Mailboxes visible: ${result.login.mailbox_count ?? 0}`);
-			(result.login.mailboxes ?? [])
-				.slice(0, 5)
-				.forEach((mailbox) => lines.push(`- ${mailbox.name}`));
+			(result.login.mailboxes ?? []).slice(0, 5).forEach((mailbox) => {
+				lines.push(`- ${mailbox.name}`);
+			});
 		} else {
 			lines.push(`- Login: failed`, `- Error: ${result.login.error ?? "unknown error"}`);
 		}
@@ -292,7 +293,9 @@ function formatMessageSummary(result: MessageListResult, period?: string): strin
 	result.messages.forEach((message) => {
 		const attachments =
 			message.attachments.length > 0
-				? message.attachments.map((attachment) => attachment.filename.replace(/\|/g, " ")).join(", ")
+				? message.attachments
+						.map((attachment) => attachment.filename.replace(/\|/g, " "))
+						.join(", ")
 				: "—";
 		lines.push(
 			`| ${message.uid} | ${(message.date ?? "—").replace(/\|/g, " ")} | ${(message.from ?? "—").replace(/\|/g, " ")} | ${(message.subject ?? "—").replace(/\|/g, " ")} | ${attachments} |`,
@@ -378,6 +381,28 @@ export default function registerProtonBridgeExtension(pi: ExtensionAPI) {
 							formatMessageSummary(result, parsed.period),
 						);
 					});
+				}),
+			),
+	});
+
+	pi.registerCommand("protonmail", {
+		description: "Open an interactive Proton Mail TUI",
+		handler: async (args: string, ctx: CommandContext) =>
+			runProtonBoundary(
+				ctx,
+				Effect.gen(function* () {
+					yield* effectFromProtonPromise(() =>
+						openProtonMailHub(
+							ctx,
+							{
+								status: protonBridgeStatus,
+								mailboxes: listProtonMailboxes,
+								messages: (cwd, mailbox, period) =>
+									listProtonMessages(cwd, mailbox, period, undefined, false, 50),
+							},
+							args,
+						),
+					);
 				}),
 			),
 	});
@@ -484,7 +509,8 @@ export default function registerProtonBridgeExtension(pi: ExtensionAPI) {
 			ctx: ToolContext,
 		) {
 			const period = params.period ? parseMonthPeriod(params.period) : undefined;
-			if (params.period && !period) throw new Error(`Invalid period \`${params.period}\`. Expected YYYY-MM.`);
+			if (params.period && !period)
+				throw new Error(`Invalid period \`${params.period}\`. Expected YYYY-MM.`);
 			const result = await listProtonMessages(
 				ctx.cwd,
 				params.mailbox,

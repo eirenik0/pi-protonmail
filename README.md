@@ -7,6 +7,7 @@ Proton Mail Bridge Pi extension for mailbox discovery and message previews.
 - `/proton-status` to check local Bridge connectivity.
 - `/proton-mailboxes` to list IMAP mailboxes.
 - `/proton-messages` to preview recent messages.
+- `/protonmail` to open the interactive mailbox TUI.
 - `protonmail_*` tools for the same workflows inside Pi.
 
 ## Configuration
