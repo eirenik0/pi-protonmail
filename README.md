@@ -1,13 +1,12 @@
 # pi-protonmail
 
-Proton Mail Bridge Pi extension for mailbox discovery and attachment imports.
+Proton Mail Bridge Pi extension for mailbox discovery and message previews.
 
 ## What it provides
 
 - `/proton-status` to check local Bridge connectivity.
 - `/proton-mailboxes` to list IMAP mailboxes.
 - `/proton-messages` to preview recent messages.
-- `/proton-import` to save staging copies of attachments.
 - `protonmail_*` tools for the same workflows inside Pi.
 
 ## Configuration

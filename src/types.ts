@@ -1,0 +1,87 @@
+export interface ProtonBridgeConfig {
+	host: string;
+	imapPort: number;
+	smtpPort: number;
+	username?: string;
+	password?: string;
+	security: string;
+	defaultMailbox?: string;
+}
+
+export interface HelperSuccess<T> {
+	ok: true;
+	result: T;
+}
+
+export interface HelperFailure {
+	ok: false;
+	error: string;
+}
+
+export interface BridgeStatusResult {
+	config: {
+		host: string;
+		imap_port: number;
+		smtp_port: number;
+		security: string;
+		default_mailbox?: string;
+		username_set: boolean;
+		password_set: boolean;
+	};
+	imap: { open: boolean; banner?: string; error?: string };
+	smtp: { open: boolean; banner?: string; error?: string };
+	login?: {
+		ok: boolean;
+		mailbox_count?: number;
+		mailboxes?: Array<{ name: string }>;
+		error?: string;
+	};
+}
+
+export interface MailboxInfo {
+	name: string;
+	raw?: string;
+	flags?: string[];
+	delimiter?: string | null;
+}
+
+export interface MessageAttachmentInfo {
+	filename: string;
+	content_type?: string;
+	size?: number;
+}
+
+export interface MessageInfo {
+	uid: string;
+	message_id?: string;
+	from?: string;
+	subject?: string;
+	date?: string;
+	attachments: MessageAttachmentInfo[];
+	attachment_count: number;
+	raw_size?: number;
+}
+
+export interface MailboxListResult {
+	mailboxes: MailboxInfo[];
+	count: number;
+}
+
+export interface MessageListResult {
+	mailbox: string;
+	count: number;
+	messages: MessageInfo[];
+}
+
+export interface CommandContext {
+	cwd: string;
+	signal?: AbortSignal;
+	ui: {
+		notify(message: string, level: string): void;
+	};
+}
+
+export interface ToolContext {
+	cwd: string;
+	signal?: AbortSignal;
+}
