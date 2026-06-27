@@ -1,0 +1,98 @@
+name: Publish npm package
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Git tag to publish (for example v0.1.0)"
+        required: false
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    name: Publish to npm
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Resolve publication ref
+        id: ref
+        shell: bash
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
+          EVENT_REF_NAME: ${{ github.ref_name }}
+        run: |
+          REF="${INPUT_TAG:-${EVENT_REF_NAME:-}}"
+          if [ -z "$REF" ]; then
+            echo "::error::Unable to resolve a publication ref."
+            exit 1
+          fi
+
+          if [[ ! "$REF" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
+            echo "::error::Publication ref must be a semver tag like v0.1.0."
+            exit 1
+          fi
+
+          echo "ref=$REF" >> "$GITHUB_OUTPUT"
+          echo "version=${BASH_REMATCH[1]}" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout repository at tag
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ steps.ref.outputs.ref }}
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          registry-url: https://registry.npmjs.org
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Validate package metadata
+        id: meta
+        shell: bash
+        env:
+          RELEASE_VERSION: ${{ steps.ref.outputs.version }}
+        run: |
+          PACKAGE_NAME="$(node -p "require('./package.json').name")"
+          PACKAGE_VERSION="$(node -p "require('./package.json').version")"
+
+          if [ "$PACKAGE_VERSION" != "$RELEASE_VERSION" ]; then
+            echo "::error::Package version ${PACKAGE_VERSION} does not match tag version ${RELEASE_VERSION}."
+            exit 1
+          fi
+
+          if npm view "${PACKAGE_NAME}@${PACKAGE_VERSION}" version >/dev/null 2>&1; then
+            echo "already_published=true" >> "$GITHUB_OUTPUT"
+            echo "${PACKAGE_NAME}@${PACKAGE_VERSION} is already published."
+            exit 0
+          fi
+
+          echo "already_published=false" >> "$GITHUB_OUTPUT"
+
+      - name: Run checks
+        run: |
+          npm run check
+          npm pack --dry-run
+
+      - name: Publish to npm
+        if: ${{ steps.meta.outputs.already_published != 'true' }}
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          if [ -z "${NODE_AUTH_TOKEN:-}" ]; then
+            echo "::error::NPM_TOKEN secret is required to publish to npm."
+            exit 1
+          fi
+
+          npm publish --access public --provenance

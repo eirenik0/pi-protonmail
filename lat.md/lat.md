@@ -12,6 +12,7 @@ These files capture the extension surface and the Bridge data flow.
 
 - [[extension]] — commands, tools, and user-facing mail workflows.
 - [[data-workflows]] — environment variables, native bridge contract, and profile-oriented config.
+- [[publishing]] — npm release and quality workflows for tagged publishes.
 - [[tests]] — behaviors worth keeping stable as the mail workflow evolves.
 
 ## Source layout
