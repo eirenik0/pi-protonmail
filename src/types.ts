@@ -14,6 +14,7 @@ export interface ProtonMailProfilePolicy {
 	default_mailbox?: string;
 	mailbox_filter?: string;
 	default_period?: string;
+	import_workspace_root?: string;
 }
 
 export interface ProtonMailWorkspaceConfig {

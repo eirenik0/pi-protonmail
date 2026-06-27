@@ -2,6 +2,6 @@
 
 ## Unreleased
 
-- Migrated the Proton Mail Bridge extension into the package `src/` layout.
+- Kept `/protonmail` as the single config command and moved Bridge/status/message handling into `protonmail_*` tools.
+- Added attachment import staging under profile-specific workspaces so the workflow stays adaptable.
 - Aligned the package metadata and docs with the Proton Mail workflow.
-- Added an interactive `/protonmail` setup hub for profile defaults and LLM-ready configuration.

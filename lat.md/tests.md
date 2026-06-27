@@ -16,7 +16,13 @@ Message summaries should include UID, sender, subject, date, and attachment name
 
 ## TUI navigation
 
-The Proton Mail setup hub should let users choose a profile, edit its defaults, and save or delete it without losing the active selection. It should stay framed and readable like the ZenMoney hub.
+The Proton Mail setup hub should preserve the active profile while users edit defaults.
+
+It should let users choose a profile, save or delete it without losing the active selection, and keep profile filtering from silently switching the active profile. The hub should stay framed and readable like the ZenMoney hub.
+
+## Import staging
+
+Attachment imports should report the profile workspace, period folder, and staging locations so the LLM can adapt the workflow without depending on business-specific folder names or a fixed workspace layout.
 
 ## Secret resolution
 

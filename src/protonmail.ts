@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
@@ -51,10 +52,6 @@ function runProtonBoundary(ctx: CommandContext, effect: Effect.Effect<void, Prot
 			}),
 		),
 	);
-}
-
-function effectFromProtonThunk<T>(thunk: () => T): Effect.Effect<T, ProtonCommandError> {
-	return Effect.try({ try: thunk, catch: toProtonCommandError });
 }
 
 function effectFromProtonPromise<T>(thunk: () => Promise<T>): Effect.Effect<T, ProtonCommandError> {
@@ -121,7 +118,7 @@ async function getProtonBridgeConfig(defaultMailbox?: string): Promise<ProtonBri
 function protonMailSetupHint(profile?: string): string {
 	const profileHint = profile ? ` for profile \`${profile}\`` : "";
 	return [
-		`Proton Bridge mail intake${profileHint} is not fully configured.`,
+		`Proton Mail setup${profileHint} is not fully configured.`,
 		"",
 		"Add these variables to .env before starting Pi:",
 		"- PROTON_BRIDGE_HOST=127.0.0.1",
@@ -132,8 +129,12 @@ function protonMailSetupHint(profile?: string): string {
 		"- PROTON_BRIDGE_PASSWORD=<Bridge mailbox password, `op://...`, or literal `op read ...` / `$(op read ...)`>",
 		"- optional: PROTON_BRIDGE_DEFAULT_MAILBOX=<mailbox name such as All Mail>",
 		"",
-		"Use `/proton-status` to verify the local Bridge ports and `/proton-mailboxes` to discover mailbox names.",
+		"Use `/protonmail` to edit profile defaults and the `protonmail_*` tools to inspect Bridge status, mailboxes, and message imports.",
 	].join("\n");
+}
+
+function resolveProtonMailImportWorkspaceRoot(profile: string, policyRoot?: string): string {
+	return policyRoot?.trim() || join(".pi", "protonmail", "imports", profile);
 }
 
 async function listProtonMailWorkingProfiles(cwd: string): Promise<ProtonMailWorkingProfile[]> {
@@ -379,22 +380,64 @@ function formatMessageSummary(result: MessageListResult, period?: string): strin
 	return lines.join("\n");
 }
 
-function sendReport(pi: ExtensionAPI, title: string, body: string) {
-	pi.sendMessage({
-		customType: "protonmail-report",
-		content: `${title}\n\n${body}`,
-		display: true,
-	});
-}
+function formatImportSummary(
+	result: {
+		workspace_root: string;
+		period_root: string;
+		mail_root: string;
+		inbox_root: string;
+		mailbox: string;
+		profile: string;
+		message_count: number;
+		attachment_count: number;
+		messages: Array<{
+			uid: string;
+			subject?: string;
+			from?: string;
+			date?: string;
+			raw_path: string;
+			attachment_count: number;
+			attachments: Array<{
+				filename: string;
+				mail_path: string;
+				inbox_path: string;
+				content_type?: string;
+				size?: number;
+			}>;
+		}>;
+	},
+	period: string,
+): string {
+	const lines = [
+		`# Proton Mail import — ${result.profile} ${period}`,
+		"",
+		`- Mailbox: \`${result.mailbox}\``,
+		`- Workspace root: \`${result.workspace_root}\``,
+		`- Period root: \`${result.period_root}\``,
+		`- Mail staging: \`${result.mail_root}\``,
+		`- Inbox staging: \`${result.inbox_root}\``,
+		`- Imported messages: ${result.message_count}`,
+		`- Imported attachments: ${result.attachment_count}`,
+		"",
+	];
 
-function parseMessagesCommandArgs(raw: string): { mailbox?: string; period?: string } {
-	const parts = raw.trim().split(/\s+/).filter(Boolean);
-	if (parts.length === 0) return {};
-	const last = parts.at(-1);
-	const period = last && parseMonthPeriod(last) ? last : undefined;
-	const mailboxParts = period ? parts.slice(0, -1) : parts;
-	const mailbox = mailboxParts.join(" ").trim() || undefined;
-	return { mailbox, period };
+	for (const message of result.messages) {
+		lines.push(`## UID ${message.uid}`, "");
+		lines.push(`- Subject: ${message.subject ?? "—"}`);
+		lines.push(`- From: ${message.from ?? "—"}`);
+		lines.push(`- Date: ${message.date ?? "—"}`);
+		lines.push(`- Raw email: \`${message.raw_path}\``);
+		for (const attachment of message.attachments) {
+			lines.push(
+				`- Attachment: \`${attachment.inbox_path}\` (${attachment.size ?? 0} B, ${attachment.content_type ?? "application/octet-stream"})`,
+			);
+		}
+		lines.push("");
+	}
+
+	if (result.message_count === 0)
+		lines.push("No matching attachment-bearing messages were imported.");
+	return lines.join("\n");
 }
 
 export default function registerProtonBridgeExtension(pi: ExtensionAPI) {
@@ -403,87 +446,6 @@ export default function registerProtonBridgeExtension(pi: ExtensionAPI) {
 		(message: { content: string }, { expanded }: { expanded: boolean }, theme: Theme) =>
 			renderPreview(message.content, expanded, theme),
 	);
-
-	pi.registerCommand("proton-status", {
-		description: "Check Proton Bridge connectivity and local configuration",
-		handler: async (_args: string, ctx: CommandContext) =>
-			runProtonBoundary(
-				ctx,
-				Effect.gen(function* () {
-					const profile = yield* effectFromProtonPromise(() =>
-						resolveProtonMailActiveProfile(ctx.cwd),
-					);
-					const result = yield* effectFromProtonPromise(() =>
-						protonBridgeStatus(ctx.cwd, profile.policy.default_mailbox),
-					);
-					yield* Effect.sync(() => {
-						sendReport(
-							pi,
-							`Proton Bridge status • ${profile.profile}`,
-							formatStatusSummary(result),
-						);
-					});
-				}),
-			),
-	});
-
-	pi.registerCommand("proton-mailboxes", {
-		description: "List mailboxes visible through Proton Bridge IMAP",
-		handler: async (args: string, ctx: CommandContext) =>
-			runProtonBoundary(
-				ctx,
-				Effect.gen(function* () {
-					const profile = yield* effectFromProtonPromise(() =>
-						resolveProtonMailActiveProfile(ctx.cwd),
-					);
-					const query = args.trim() || undefined;
-					const result = yield* effectFromProtonPromise(() =>
-						listProtonMailboxes(ctx.cwd, query, profile.policy.default_mailbox),
-					);
-					yield* Effect.sync(() => {
-						sendReport(
-							pi,
-							query
-								? `Proton mailboxes matching ${query}`
-								: `Proton mailboxes • ${profile.profile}`,
-							formatMailboxSummary(result, query),
-						);
-					});
-				}),
-			),
-	});
-
-	pi.registerCommand("proton-messages", {
-		description: "Preview attachment-bearing Proton Bridge messages for a mailbox/month",
-		handler: async (args: string, ctx: CommandContext) =>
-			runProtonBoundary(
-				ctx,
-				Effect.gen(function* () {
-					const profile = yield* effectFromProtonPromise(() =>
-						resolveProtonMailActiveProfile(ctx.cwd),
-					);
-					const parsed = yield* effectFromProtonThunk(() => parseMessagesCommandArgs(args));
-					const result = yield* effectFromProtonPromise(() =>
-						listProtonMessages(
-							ctx.cwd,
-							parsed.mailbox,
-							parsed.period ?? profile.policy.default_period,
-							undefined,
-							false,
-							20,
-							profile.policy.default_mailbox,
-						),
-					);
-					yield* Effect.sync(() => {
-						sendReport(
-							pi,
-							`Proton messages ${result.mailbox}${(parsed.period ?? profile.policy.default_period) ? ` ${parsed.period ?? profile.policy.default_period}` : ""}`,
-							formatMessageSummary(result, parsed.period ?? profile.policy.default_period),
-						);
-					});
-				}),
-			),
-	});
 
 	pi.registerCommand("protonmail", {
 		description: "Open the Proton Mail setup hub",
@@ -553,9 +515,9 @@ export default function registerProtonBridgeExtension(pi: ExtensionAPI) {
 		name: "protonmail_list_mailboxes",
 		label: "ProtonMail List Mailboxes",
 		description: "List Proton Bridge mailboxes available through local IMAP",
-		promptSnippet: "List Proton Bridge mailboxes before choosing one for import",
+		promptSnippet: "List Proton Bridge mailboxes before choosing one",
 		promptGuidelines: [
-			"Use this tool after protonmail_bridge_status when you need the exact mailbox name for import.",
+			"Use this tool after protonmail_bridge_status when you need the exact mailbox name.",
 			"Mailbox names come from Proton Bridge IMAP and may differ from UI labels if the account language changes.",
 		],
 		parameters: Type.Object({
@@ -569,14 +531,11 @@ export default function registerProtonBridgeExtension(pi: ExtensionAPI) {
 			ctx: ToolContext,
 		) {
 			const profile = await resolveProtonMailActiveProfile(ctx.cwd);
-			const result = await listProtonMailboxes(
-				ctx.cwd,
-				params.query,
-				profile.policy.default_mailbox,
-			);
+			const query = params.query?.trim() || profile.policy.mailbox_filter;
+			const result = await listProtonMailboxes(ctx.cwd, query, profile.policy.default_mailbox);
 			return {
 				content: [
-					{ type: "text", text: trimText(formatMailboxSummary(result, params.query), 160, 16000) },
+					{ type: "text", text: trimText(formatMailboxSummary(result, query), 160, 16000) },
 				],
 				details: result,
 			};
@@ -595,15 +554,15 @@ export default function registerProtonBridgeExtension(pi: ExtensionAPI) {
 		name: "protonmail_list_messages",
 		label: "ProtonMail List Messages",
 		description: "List recent attachment-bearing messages from a Proton Bridge mailbox",
-		promptSnippet: "Preview Proton Bridge messages before importing expense attachments",
+		promptSnippet: "Preview Proton Bridge messages before importing files",
 		promptGuidelines: [
-			"Pass an explicit mailbox or set PROTON_BRIDGE_DEFAULT_MAILBOX.",
-			"Use period to narrow the scan to one month such as 2026-04 when importing spendings.",
+			"Pass an explicit mailbox or rely on the active profile default mailbox.",
+			"Use period to narrow the scan to one month such as 2026-04.",
 		],
 		parameters: Type.Object({
 			mailbox: Type.Optional(
 				Type.String({
-					description: "Mailbox name; defaults to PROTON_BRIDGE_DEFAULT_MAILBOX if set",
+					description: "Mailbox name; defaults to the active profile mailbox if set",
 				}),
 			),
 			period: Type.Optional(Type.String({ description: "Optional month filter such as 2026-04" })),
@@ -631,11 +590,12 @@ export default function registerProtonBridgeExtension(pi: ExtensionAPI) {
 			if (params.period && !period)
 				throw new Error(`Invalid period \`${params.period}\`. Expected YYYY-MM.`);
 			const resolvedPeriod = period ?? profile.policy.default_period;
+			const query = params.query?.trim() || profile.policy.mailbox_filter;
 			const result = await listProtonMessages(
 				ctx.cwd,
 				params.mailbox,
 				resolvedPeriod,
-				params.query,
+				query,
 				params.unseenOnly ?? false,
 				params.limit ?? 20,
 				profile.policy.default_mailbox,
@@ -653,6 +613,125 @@ export default function registerProtonBridgeExtension(pi: ExtensionAPI) {
 		renderCall(args: { mailbox?: string; period?: string }, theme: Theme) {
 			return new Text(
 				`${theme.fg("toolTitle", theme.bold("protonmail_list_messages "))}${theme.fg("dim", `${args.mailbox ?? "default mailbox"}${args.period ? ` ${args.period}` : ""}`)}`,
+				0,
+				0,
+			);
+		},
+		renderResult: renderToolResult,
+	});
+
+	pi.registerTool({
+		name: "protonmail_import_attachments",
+		label: "ProtonMail Import Attachments",
+		description: "Stage attachment-bearing Proton Bridge messages into a profile workspace",
+		promptSnippet: "Import attachments from Proton Bridge into the active workspace",
+		promptGuidelines: [
+			"Use the active profile defaults unless the user explicitly overrides mailbox or period.",
+			"The tool stages raw mail and attachments under the profile workspace for later adaptation.",
+		],
+		parameters: Type.Object({
+			mailbox: Type.Optional(
+				Type.String({
+					description: "Mailbox name; defaults to the active profile mailbox if set",
+				}),
+			),
+			period: Type.Optional(Type.String({ description: "Optional month filter such as 2026-04" })),
+			query: Type.Optional(
+				Type.String({ description: "Optional subject/from/attachment substring filter" }),
+			),
+			unseenOnly: Type.Optional(Type.Boolean({ description: "If true, limit to unseen messages" })),
+			markSeen: Type.Optional(
+				Type.Boolean({ description: "If true, mark imported messages as seen" }),
+			),
+			limit: Type.Optional(Type.Number({ description: "Maximum number of messages to import" })),
+			workspaceRoot: Type.Optional(
+				Type.String({ description: "Optional relative workspace root for staged imports" }),
+			),
+		}),
+		async execute(
+			_id: string,
+			params: {
+				mailbox?: string;
+				period?: string;
+				query?: string;
+				unseenOnly?: boolean;
+				markSeen?: boolean;
+				limit?: number;
+				workspaceRoot?: string;
+			},
+			_signal: AbortSignal,
+			_onUpdate: unknown,
+			ctx: ToolContext,
+		) {
+			const profile = await resolveProtonMailActiveProfile(ctx.cwd);
+			const period = params.period ? parseMonthPeriod(params.period) : undefined;
+			if (params.period && !period)
+				throw new Error(`Invalid period \`${params.period}\`. Expected YYYY-MM.`);
+			const resolvedPeriod = period ?? profile.policy.default_period;
+			if (!resolvedPeriod)
+				throw new Error("No period provided and the active profile has no default_period.");
+			const query = params.query?.trim() || profile.policy.mailbox_filter;
+			const config = await getProtonBridgeConfig(profile.policy.default_mailbox);
+			if (!config.username || !config.password)
+				throw new Error(protonMailSetupHint(profile.profile));
+			const workspaceRoot = resolveProtonMailImportWorkspaceRoot(
+				profile.profile,
+				params.workspaceRoot || profile.policy.import_workspace_root,
+			);
+			const result = await runHelper<{
+				workspace_root: string;
+				period_root: string;
+				mail_root: string;
+				inbox_root: string;
+				mailbox: string;
+				profile: string;
+				message_count: number;
+				attachment_count: number;
+				messages: Array<{
+					uid: string;
+					subject?: string;
+					from?: string;
+					date?: string;
+					raw_path: string;
+					attachment_count: number;
+					attachments: Array<{
+						filename: string;
+						mail_path: string;
+						inbox_path: string;
+						content_type?: string;
+						size?: number;
+					}>;
+				}>;
+			}>(ctx.cwd, "import-attachments", {
+				cwd: ctx.cwd,
+				profile: profile.profile,
+				workspace_root: workspaceRoot,
+				config: {
+					host: config.host,
+					imap_port: config.imapPort,
+					smtp_port: config.smtpPort,
+					username: config.username,
+					password: config.password,
+					security: config.security,
+					default_mailbox: config.defaultMailbox,
+				},
+				mailbox: params.mailbox,
+				period: resolvedPeriod,
+				query,
+				unseen_only: params.unseenOnly ?? false,
+				mark_seen: params.markSeen ?? false,
+				limit: params.limit ?? 100,
+			});
+			return {
+				content: [
+					{ type: "text", text: trimText(formatImportSummary(result, resolvedPeriod), 160, 16000) },
+				],
+				details: result,
+			};
+		},
+		renderCall(args: { mailbox?: string; period?: string }, theme: Theme) {
+			return new Text(
+				`${theme.fg("toolTitle", theme.bold("protonmail_import_attachments "))}${theme.fg("dim", `${args.mailbox ?? "default mailbox"}${args.period ? ` ${args.period}` : ""}`)}`,
 				0,
 				0,
 			);

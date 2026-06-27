@@ -4,7 +4,7 @@ This repo packages a Pi extension for Proton Bridge mailbox discovery, message p
 
 ## Repository overview
 
-`package.json` points Pi at [[src/index.ts#registerProtonMailExtension]], which forwards to [[src/protonmail.ts#registerProtonBridgeExtension]]. The extension resolves optional 1Password secret references through [[src/secret-refs.ts#resolveSecretReference]].
+`package.json` points Pi at [[src/index.ts#registerProtonMailExtension]], which forwards to [[src/protonmail.ts#registerProtonBridgeExtension]]. The extension resolves optional 1Password secret references through [[src/secret-refs.ts#resolveSecretReference]] and stages attachment imports through profile-specific workspaces, with an optional `import_workspace_root` policy override.
 
 ## Docs
 
@@ -16,7 +16,7 @@ These files capture the extension surface and the Bridge data flow.
 
 ## Source layout
 
-The source is split into a thin entrypoint, the main Proton Bridge implementation, and a few shared helpers.
+The source is split into a thin entrypoint, a single config command, the main Proton Bridge tools, and a few shared helpers.
 
 ### `src/index.ts`
 
@@ -24,7 +24,7 @@ Thin entrypoint that hands the Pi extension API to the Proton Bridge registrar.
 
 ### `src/protonmail.ts`
 
-Main implementation for command/tool registration, helper execution, and message formatting.
+Main implementation for the `/protonmail` command, LLM tool registration, helper execution, and message/import formatting.
 
 ### `src/hub.ts`
 

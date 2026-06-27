@@ -4,11 +4,8 @@ Proton Mail Bridge Pi extension for mailbox discovery and profile-based setup.
 
 ## What it provides
 
-- `/proton-status` to check local Bridge connectivity.
-- `/proton-mailboxes` to list IMAP mailboxes.
-- `/proton-messages` to preview recent messages.
 - `/protonmail` to open the interactive setup hub.
-- `protonmail_*` tools for the same workflows inside Pi.
+- `protonmail_*` tools for Bridge status, mailbox lookup, message previews, and attachment imports.
 
 ## Configuration
 
@@ -24,4 +21,4 @@ Set the Proton Bridge connection variables in your Pi environment:
 
 The extension bundles its Proton Bridge helper script in `helpers/proton_bridge.py`.
 
-Profile settings are stored under `.pi/protonmail/` as `config.json` plus per-profile `profiles/<name>/policy.json` files.
+Profile settings are stored under `.pi/protonmail/` as `config.json` plus per-profile `profiles/<name>/policy.json` files. Attachment imports are staged under `.pi/protonmail/imports/<profile>/...` by default and can be adapted through profile policy.

@@ -4,6 +4,8 @@ This section describes the Proton Bridge Pi extension surface and the user-facin
 
 ## Proton Bridge Mail Intake
 
-The extension exposes `/proton-status`, `/proton-mailboxes`, `/proton-messages`, and `/protonmail`, plus matching `protonmail_*` tools for Pi. They check the Bridge, list mailboxes, preview recent messages, and open the interactive setup hub.
+The extension exposes `/protonmail` plus `protonmail_*` tools for setup and mail workflows.
 
-Command and tool summaries are formatted by [[src/protonmail.ts#formatStatusSummary]], [[src/protonmail.ts#formatMailboxSummary]], and [[src/protonmail.ts#formatMessageSummary]]. The hub itself lives in [[src/hub.ts#openProtonMailHub]] and stores profile defaults for later LLM workflows.
+The command keeps config edits separate from LLM-facing workflows, and profile filtering should not change the active profile until the user explicitly selects one.
+
+Command and tool summaries are formatted by [[src/protonmail.ts#formatStatusSummary]], [[src/protonmail.ts#formatMailboxSummary]], [[src/protonmail.ts#formatMessageSummary]], and [[src/protonmail.ts#formatImportSummary]]. The hub itself lives in [[src/hub.ts#openProtonMailHub]] and stores profile defaults for later LLM workflows.

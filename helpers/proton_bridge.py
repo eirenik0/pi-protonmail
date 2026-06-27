@@ -242,15 +242,26 @@ def ensure_parent(path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
 
 
-def save_import(config: BridgeConfig, *, cwd: str, entity: str, period: str, mailbox: str, unseen_only: bool = False, query: str | None = None, mark_seen: bool = False, limit: int = 100) -> dict[str, Any]:
+def save_import(
+    config: BridgeConfig,
+    *,
+    cwd: str,
+    workspace_root: str,
+    period: str,
+    mailbox: str,
+    unseen_only: bool = False,
+    query: str | None = None,
+    mark_seen: bool = False,
+    limit: int = 100,
+) -> dict[str, Any]:
     if not re.fullmatch(r"\d{4}-\d{2}", period):
         raise ValueError(f"Invalid period '{period}'. Expected YYYY-MM.")
 
-    year = period[:4]
-    spendings_root = Path(cwd) / entity / year / "Spendings"
-    mail_root = spendings_root / "_mail" / sanitize_path_segment(mailbox)
-    inbox_root = spendings_root / "_inbox"
-    spendings_root.mkdir(parents=True, exist_ok=True)
+    base_root = Path(cwd) / workspace_root
+    period_root = base_root / period
+    mail_root = period_root / "_mail" / sanitize_path_segment(mailbox)
+    inbox_root = period_root / "_inbox"
+    period_root.mkdir(parents=True, exist_ok=True)
     mail_root.mkdir(parents=True, exist_ok=True)
     inbox_root.mkdir(parents=True, exist_ok=True)
 
@@ -309,7 +320,7 @@ def save_import(config: BridgeConfig, *, cwd: str, entity: str, period: str, mai
                 imported_attachment_count += 1
 
             meta = {
-                "entity": entity,
+                "workspace_root": workspace_root,
                 "period": period,
                 "mailbox": mailbox,
                 "uid": uid,
@@ -331,7 +342,8 @@ def save_import(config: BridgeConfig, *, cwd: str, entity: str, period: str, mai
                 break
 
         return {
-            "spendings_root": str(spendings_root.relative_to(Path(cwd))),
+            "workspace_root": str(base_root.relative_to(Path(cwd))),
+            "period_root": str(period_root.relative_to(Path(cwd))),
             "mail_root": str(mail_root.relative_to(Path(cwd))),
             "inbox_root": str(inbox_root.relative_to(Path(cwd))),
             "message_count": len(imported_messages),
@@ -432,17 +444,21 @@ def import_attachments_op(payload: dict[str, Any]) -> dict[str, Any]:
     mailbox = payload.get("mailbox") or config.default_mailbox
     if not mailbox:
         raise RuntimeError("No mailbox provided and PROTON_BRIDGE_DEFAULT_MAILBOX is not set.")
-    entity = payload.get("entity")
+    profile = sanitize_path_segment(str(payload.get("profile") or "default"))
+    workspace_root = payload.get("workspace_root") or os.path.join(
+        ".pi",
+        "protonmail",
+        "imports",
+        profile,
+    )
     period = payload.get("period")
     cwd = payload.get("cwd") or os.getcwd()
-    if entity not in {"Fluxomnia", "Zivnost"}:
-        raise RuntimeError("Entity must be Fluxomnia or Zivnost.")
     if not period:
         raise RuntimeError("Missing period.")
     result = save_import(
         config,
         cwd=cwd,
-        entity=entity,
+        workspace_root=str(workspace_root),
         period=period,
         mailbox=mailbox,
         unseen_only=bool(payload.get("unseen_only")),
@@ -451,6 +467,7 @@ def import_attachments_op(payload: dict[str, Any]) -> dict[str, Any]:
         limit=int(payload.get("limit") or 100),
     )
     result["mailbox"] = mailbox
+    result["profile"] = profile
     return result
 
 
