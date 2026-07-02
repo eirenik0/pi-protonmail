@@ -9,6 +9,7 @@ import MailComposer from "nodemailer/lib/mail-composer/index.js";
 import type Mail from "nodemailer/lib/mailer/index.js";
 
 import type {
+	ApplyLabelsResult,
 	BridgeStatusResult,
 	CreateDraftResult,
 	MailboxInfo,
@@ -83,6 +84,12 @@ interface MoveMessageOptions {
 	mailbox: string;
 	uid: string;
 	destination: string;
+}
+
+interface ApplyLabelsOptions {
+	mailbox: string;
+	uid: string;
+	labels: string[];
 }
 
 function sanitizeFilename(value: string): string {
@@ -334,6 +341,21 @@ function messageIdFromRaw(raw: Buffer): string | undefined {
 	return match?.[1]?.trim();
 }
 
+function resolveLabelMailbox(label: string, mailboxes: MailboxInfo[]): string {
+	const trimmed = label.trim();
+	const candidates = [trimmed, `Labels/${trimmed}`];
+	for (const candidate of candidates) {
+		const exact = mailboxes.find((mailbox) => mailbox.name === candidate);
+		if (exact) return exact.name;
+	}
+	for (const candidate of candidates) {
+		const lower = candidate.toLowerCase();
+		const match = mailboxes.find((mailbox) => mailbox.name.toLowerCase() === lower);
+		if (match) return match.name;
+	}
+	return trimmed;
+}
+
 export async function protonBridgeStatus(config: ProtonBridgeConfig): Promise<BridgeStatusResult> {
 	const imapProbe = await probePort(config.host, config.imapPort);
 	const smtpProbe = await probePort(config.host, config.smtpPort);
@@ -527,6 +549,35 @@ export async function protonBridgeMoveMessage(
 			uid: options.uid,
 			source: options.mailbox,
 			destination: options.destination,
+		};
+	} finally {
+		await client?.logout().catch(() => undefined);
+	}
+}
+
+export async function protonBridgeApplyLabels(
+	config: ProtonBridgeConfig,
+	options: ApplyLabelsOptions,
+): Promise<ApplyLabelsResult> {
+	requireBridgeCredentials(config);
+	const labels = [...new Set(options.labels.map((label) => label.trim()).filter(Boolean))];
+	if (labels.length === 0) throw new Error("At least one label is required.");
+	let client: ImapFlow | undefined;
+	try {
+		client = await connectImap(config);
+		const mailboxes = await listMailboxes(client);
+		await client.mailboxOpen(options.mailbox, { readOnly: false });
+		const labelMailboxes = [
+			...new Set(labels.map((label) => resolveLabelMailbox(label, mailboxes))),
+		];
+		for (const labelMailbox of labelMailboxes) {
+			await client.messageCopy(options.uid, labelMailbox, { uid: true });
+		}
+		return {
+			uid: options.uid,
+			mailbox: options.mailbox,
+			labels,
+			label_mailboxes: labelMailboxes,
 		};
 	} finally {
 		await client?.logout().catch(() => undefined);

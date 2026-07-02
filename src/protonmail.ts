@@ -10,6 +10,7 @@ import { Type } from "typebox";
 import { PREVIEW_LINES } from "./constants.ts";
 import { openProtonMailHub } from "./hub.ts";
 import {
+	protonBridgeApplyLabels as runProtonBridgeApplyLabels,
 	protonBridgeCreateDraft as runProtonBridgeCreateDraft,
 	protonBridgeImportAttachments as runProtonBridgeImportAttachments,
 	protonBridgeListMailboxes as runProtonBridgeListMailboxes,
@@ -20,6 +21,7 @@ import {
 } from "./proton-bridge.ts";
 import { resolveSecretReference } from "./secret-refs.ts";
 import type {
+	ApplyLabelsResult,
 	BridgeStatusResult,
 	CommandContext,
 	CreateDraftResult,
@@ -351,6 +353,17 @@ function formatMoveSummary(result: MoveMessageResult): string {
 		`- UID: \`${result.uid}\``,
 		`- Source: \`${result.source}\``,
 		`- Destination: \`${result.destination}\``,
+	].join("\n");
+}
+
+function formatApplyLabelsSummary(result: ApplyLabelsResult): string {
+	return [
+		"# Proton Mail labels applied",
+		"",
+		`- UID: \`${result.uid}\``,
+		`- Mailbox: \`${result.mailbox}\``,
+		`- Labels: ${result.labels.map((label) => `\`${label}\``).join(", ")}`,
+		`- Label mailboxes: ${result.label_mailboxes.map((label) => `\`${label}\``).join(", ")}`,
 	].join("\n");
 }
 
@@ -774,6 +787,47 @@ export default function registerProtonBridgeExtension(pi: ExtensionAPI) {
 		renderCall(args: { mailbox: string; uid: string; destination: string }, theme: Theme) {
 			return new Text(
 				`${theme.fg("toolTitle", theme.bold("protonmail_move_message "))}${theme.fg("dim", `${args.mailbox} UID ${args.uid} → ${args.destination}`)}`,
+				0,
+				0,
+			);
+		},
+		renderResult: renderToolResult,
+	});
+
+	pi.registerTool({
+		name: "protonmail_apply_labels",
+		label: "ProtonMail Apply Labels",
+		description: "Apply Proton labels to a message through Bridge IMAP copy",
+		promptSnippet: "Apply one or more Proton labels to a message UID",
+		promptGuidelines: [
+			"Use protonmail_list_mailboxes when you need the exact label mailbox names returned by Proton Bridge.",
+			"Bare label names are resolved to matching mailboxes or Labels/<name> when available.",
+		],
+		parameters: Type.Object({
+			mailbox: Type.String({ description: "Source mailbox name" }),
+			uid: Type.String({ description: "Message UID in the source mailbox" }),
+			labels: Type.Array(Type.String(), { description: "Labels or label mailbox paths to apply" }),
+		}),
+		async execute(
+			_id: string,
+			params: { mailbox: string; uid: string; labels: string[] },
+			_signal: AbortSignal,
+			_onUpdate: unknown,
+			ctx: ToolContext,
+		) {
+			const profile = await resolveProtonMailActiveProfile(ctx.cwd);
+			const config = await getProtonBridgeConfig(profile.policy.default_mailbox);
+			if (!config.username || !config.password)
+				throw new Error(protonMailSetupHint(profile.profile));
+			const result = await runProtonBridgeApplyLabels(config, params);
+			return {
+				content: [{ type: "text", text: trimText(formatApplyLabelsSummary(result), 160, 16000) }],
+				details: result,
+			};
+		},
+		renderCall(args: { mailbox: string; uid: string; labels: string[] }, theme: Theme) {
+			return new Text(
+				`${theme.fg("toolTitle", theme.bold("protonmail_apply_labels "))}${theme.fg("dim", `${args.mailbox} UID ${args.uid} + ${args.labels.join(", ")}`)}`,
 				0,
 				0,
 			);

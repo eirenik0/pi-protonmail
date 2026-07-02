@@ -14,6 +14,6 @@ Command and tool summaries are formatted by [[src/protonmail.ts#formatStatusSumm
 
 The extension can compose, send, and move mail through Proton Bridge so invoice and filing workflows do not stop at incoming attachment import.
 
-Draft creation uses [[src/proton-bridge.ts#protonBridgeCreateDraft]] to build MIME messages with local attachments and APPEND them to a Drafts mailbox. Direct sending uses [[src/proton-bridge.ts#protonBridgeSendMessage]] over Bridge SMTP and can append a sent copy to a workflow mailbox. Filing uses [[src/proton-bridge.ts#protonBridgeMoveMessage]] to move a UID between Proton folders.
+Draft creation uses [[src/proton-bridge.ts#protonBridgeCreateDraft]] to build MIME messages with local attachments and APPEND them to a Drafts mailbox. Direct sending uses [[src/proton-bridge.ts#protonBridgeSendMessage]] over Bridge SMTP and can append a sent copy to a workflow mailbox. Filing uses [[src/proton-bridge.ts#protonBridgeMoveMessage]] to move a UID between Proton folders, while [[src/proton-bridge.ts#protonBridgeApplyLabels]] copies a UID into label mailboxes without removing it from the source.
 
-Outgoing tools are registered by [[src/protonmail.ts#registerProtonBridgeExtension]] as `protonmail_create_draft`, `protonmail_send`, and `protonmail_move_message`. The active profile policy may define `default_from`, which is used when a tool call does not provide an explicit sender address.
+Outgoing tools are registered by [[src/protonmail.ts#registerProtonBridgeExtension]] as `protonmail_create_draft`, `protonmail_send`, `protonmail_move_message`, and `protonmail_apply_labels`. The active profile policy may define `default_from`, which is used when a tool call does not provide an explicit sender address.

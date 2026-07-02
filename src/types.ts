@@ -112,6 +112,13 @@ export interface MoveMessageResult {
 	destination: string;
 }
 
+export interface ApplyLabelsResult {
+	uid: string;
+	mailbox: string;
+	labels: string[];
+	label_mailboxes: string[];
+}
+
 export type CommandContext = Pick<ExtensionCommandContext, "cwd" | "hasUI" | "ui">;
 
 export interface ToolContext {

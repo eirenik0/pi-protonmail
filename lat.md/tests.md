@@ -40,6 +40,10 @@ Message sending should use Proton Bridge SMTP for delivery and optionally append
 
 Message moving should open the source mailbox by UID and move the selected message to the requested Proton destination folder.
 
+## Label application
+
+Label application should copy the selected UID into each resolved label mailbox while leaving the message in its source mailbox.
+
 ## Profile default_from
 
 Outgoing tools should use an explicit `from` value first and otherwise require the active profile policy to provide `default_from`.
