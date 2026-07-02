@@ -3,6 +3,13 @@
 - Run `lat search` to find sections relevant to your task. Read them to understand the design intent before writing code.
 - Run `lat expand` on user prompts to expand any `[[refs]]` — this resolves section names to file locations and provides context.
 
+# Commit message convention
+
+- Use Conventional Commits for all commit messages: `<type>(optional-scope): <description>`.
+- Prefer these types: `feat`, `fix`, `docs`, `test`, `refactor`, `chore`, `ci`, `build`.
+- Keep the subject imperative, concise, and lowercase after the type, e.g. `feat: add protonmail label tool`.
+- Use `!` or a `BREAKING CHANGE:` footer for breaking changes.
+
 # Post-task checklist (REQUIRED — do not skip)
 
 After EVERY task, before responding to the user:
