@@ -28,6 +28,22 @@ It should let users choose a profile, save or delete it without losing the activ
 
 Attachment imports should report the profile workspace, period folder, and staging locations so the LLM can adapt the workflow without depending on business-specific folder names or a fixed workspace layout.
 
+## Draft creation
+
+Draft creation should compose a MIME message with sender, recipients, body, and local attachments before APPENDing it to the configured Drafts mailbox.
+
+## Message sending
+
+Message sending should use Proton Bridge SMTP for delivery and optionally append a copy to a chosen IMAP mailbox for workflow filing.
+
+## Message moving
+
+Message moving should open the source mailbox by UID and move the selected message to the requested Proton destination folder.
+
+## Profile default_from
+
+Outgoing tools should use an explicit `from` value first and otherwise require the active profile policy to provide `default_from`.
+
 ## Secret resolution
 
 `op://` and `op read` references should resolve before any Bridge request, and clear errors should surface when the 1Password CLI is unavailable or returns an empty secret.

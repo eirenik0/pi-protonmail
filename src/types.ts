@@ -15,6 +15,7 @@ export interface ProtonMailProfilePolicy {
 	mailbox_filter?: string;
 	default_period?: string;
 	import_workspace_root?: string;
+	default_from?: string;
 }
 
 export interface ProtonMailWorkspaceConfig {
@@ -80,6 +81,35 @@ export interface MessageListResult {
 	mailbox: string;
 	count: number;
 	messages: MessageInfo[];
+}
+
+export interface CreateDraftResult {
+	mailbox: string;
+	uid?: string;
+	from: string;
+	to: string[];
+	cc?: string[];
+	bcc?: string[];
+	subject: string;
+	attachment_count: number;
+}
+
+export interface SendMessageResult {
+	from: string;
+	to: string[];
+	cc?: string[];
+	bcc?: string[];
+	subject: string;
+	attachment_count: number;
+	message_id?: string;
+	saved_to_mailbox?: string;
+	saved_uid?: string;
+}
+
+export interface MoveMessageResult {
+	uid: string;
+	source: string;
+	destination: string;
 }
 
 export type CommandContext = Pick<ExtensionCommandContext, "cwd" | "hasUI" | "ui">;

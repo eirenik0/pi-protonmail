@@ -1,17 +1,23 @@
-import { access, copyFile, mkdir, writeFile } from "node:fs/promises";
+import { access, copyFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import { createConnection } from "node:net";
-import { join, relative } from "node:path";
+import { basename, isAbsolute, join, relative } from "node:path";
 
 import { ImapFlow } from "imapflow";
 import { simpleParser } from "mailparser";
+import nodemailer from "nodemailer";
+import MailComposer from "nodemailer/lib/mail-composer/index.js";
+import type Mail from "nodemailer/lib/mailer/index.js";
 
 import type {
 	BridgeStatusResult,
+	CreateDraftResult,
 	MailboxInfo,
 	MailboxListResult,
 	MessageInfo,
 	MessageListResult,
+	MoveMessageResult,
 	ProtonBridgeConfig,
+	SendMessageResult,
 } from "./types.ts";
 
 export interface ProtonBridgeImportResult {
@@ -46,12 +52,37 @@ interface ImportOptions {
 	cwd: string;
 	workspaceRoot: string;
 	period: string;
-	mailbox: string;
+	mailbox?: string;
 	profile: string;
 	unseenOnly?: boolean;
 	query?: string;
 	markSeen?: boolean;
 	limit?: number;
+}
+
+interface OutgoingMessageOptions {
+	cwd: string;
+	from: string;
+	to: string[];
+	cc?: string[];
+	bcc?: string[];
+	subject: string;
+	body: string;
+	attachments?: string[];
+}
+
+interface CreateDraftOptions extends OutgoingMessageOptions {
+	draftsMailbox?: string;
+}
+
+interface SendMessageOptions extends OutgoingMessageOptions {
+	saveToMailbox?: string;
+}
+
+interface MoveMessageOptions {
+	mailbox: string;
+	uid: string;
+	destination: string;
 }
 
 function sanitizeFilename(value: string): string {
@@ -244,6 +275,65 @@ async function ensureDir(path: string): Promise<void> {
 	await mkdir(path, { recursive: true });
 }
 
+function requireBridgeCredentials(
+	config: ProtonBridgeConfig,
+): asserts config is ProtonBridgeConfig & {
+	username: string;
+	password: string;
+} {
+	if (!config.username || !config.password)
+		throw new Error("Missing Proton Bridge username/password.");
+}
+
+function resolveLocalPath(cwd: string, path: string): string {
+	return isAbsolute(path) ? path : join(cwd, path);
+}
+
+async function buildAttachmentOptions(
+	cwd: string,
+	attachments?: string[],
+): Promise<Mail.Attachment[]> {
+	const files: Mail.Attachment[] = [];
+	for (const attachmentPath of attachments ?? []) {
+		const path = resolveLocalPath(cwd, attachmentPath);
+		files.push({
+			filename: basename(path),
+			content: await readFile(path),
+		});
+	}
+	return files;
+}
+
+async function buildMimeMessage(options: OutgoingMessageOptions, keepBcc = false): Promise<Buffer> {
+	const message = new MailComposer({
+		from: options.from,
+		to: options.to,
+		cc: options.cc,
+		bcc: options.bcc,
+		subject: options.subject,
+		text: options.body,
+		attachments: await buildAttachmentOptions(options.cwd, options.attachments),
+	});
+	const node = message.compile();
+	if (keepBcc) (node as unknown as { keepBcc: boolean }).keepBcc = true;
+	return node.build();
+}
+
+function appendUid(result: unknown): string | undefined {
+	if (!result || typeof result !== "object" || !("uid" in result)) return undefined;
+	const uid = (result as { uid?: unknown }).uid;
+	return uid == null ? undefined : String(uid);
+}
+
+function allRecipients(options: OutgoingMessageOptions): string[] {
+	return [...options.to, ...(options.cc ?? []), ...(options.bcc ?? [])].filter(Boolean);
+}
+
+function messageIdFromRaw(raw: Buffer): string | undefined {
+	const match = raw.toString("utf8").match(/^Message-ID:\s*(.+)$/im);
+	return match?.[1]?.trim();
+}
+
 export async function protonBridgeStatus(config: ProtonBridgeConfig): Promise<BridgeStatusResult> {
 	const imapProbe = await probePort(config.host, config.imapPort);
 	const smtpProbe = await probePort(config.host, config.smtpPort);
@@ -330,6 +420,114 @@ export async function protonBridgeListMessages(
 			if (messages.length >= limit) break;
 		}
 		return { mailbox: selectedMailbox, count: messages.length, messages };
+	} finally {
+		await client?.logout().catch(() => undefined);
+	}
+}
+
+export async function protonBridgeCreateDraft(
+	config: ProtonBridgeConfig,
+	options: CreateDraftOptions,
+): Promise<CreateDraftResult> {
+	requireBridgeCredentials(config);
+	const mailbox = options.draftsMailbox?.trim() || "Drafts";
+	const raw = await buildMimeMessage(options, true);
+	let client: ImapFlow | undefined;
+	try {
+		client = await connectImap(config);
+		const result = await client.append(mailbox, raw, ["\\Draft", "\\Seen"], new Date());
+		return {
+			mailbox,
+			uid: appendUid(result),
+			from: options.from,
+			to: options.to,
+			cc: options.cc,
+			bcc: options.bcc,
+			subject: options.subject,
+			attachment_count: options.attachments?.length ?? 0,
+		};
+	} finally {
+		await client?.logout().catch(() => undefined);
+	}
+}
+
+export async function protonBridgeSendMessage(
+	config: ProtonBridgeConfig,
+	options: SendMessageOptions,
+): Promise<SendMessageResult> {
+	requireBridgeCredentials(config);
+	const raw = await buildMimeMessage(options);
+	const security = normalizeSecurity(config.security);
+	const transport = nodemailer.createTransport({
+		host: config.host,
+		port: config.smtpPort,
+		secure: security === "ssl",
+		ignoreTLS: security === "plain",
+		requireTLS: security === "starttls",
+		auth: {
+			user: config.username,
+			pass: config.password,
+		},
+		tls: {
+			rejectUnauthorized: false,
+		},
+	});
+
+	let messageId = messageIdFromRaw(raw);
+	try {
+		const info = await transport.sendMail({
+			envelope: {
+				from: options.from,
+				to: allRecipients(options),
+			},
+			raw,
+		});
+		if (typeof info.messageId === "string") messageId = info.messageId;
+	} finally {
+		transport.close();
+	}
+
+	const result: SendMessageResult = {
+		from: options.from,
+		to: options.to,
+		cc: options.cc,
+		bcc: options.bcc,
+		subject: options.subject,
+		attachment_count: options.attachments?.length ?? 0,
+		message_id: messageId,
+	};
+
+	const saveToMailbox = options.saveToMailbox?.trim();
+	if (saveToMailbox) {
+		let client: ImapFlow | undefined;
+		try {
+			client = await connectImap(config);
+			const appendResult = await client.append(saveToMailbox, raw, ["\\Seen"], new Date());
+			result.saved_to_mailbox = saveToMailbox;
+			result.saved_uid = appendUid(appendResult);
+		} finally {
+			await client?.logout().catch(() => undefined);
+		}
+	}
+
+	return result;
+}
+
+export async function protonBridgeMoveMessage(
+	config: ProtonBridgeConfig,
+	options: MoveMessageOptions,
+): Promise<MoveMessageResult> {
+	requireBridgeCredentials(config);
+	let client: ImapFlow | undefined;
+	try {
+		client = await connectImap(config);
+		await client.mailboxOpen(options.mailbox, { readOnly: false });
+		await client.messageMove(options.uid, options.destination, { uid: true });
+		return {
+			uid: options.uid,
+			source: options.mailbox,
+			destination: options.destination,
+		};
 	} finally {
 		await client?.logout().catch(() => undefined);
 	}

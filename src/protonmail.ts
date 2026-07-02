@@ -10,19 +10,25 @@ import { Type } from "typebox";
 import { PREVIEW_LINES } from "./constants.ts";
 import { openProtonMailHub } from "./hub.ts";
 import {
+	protonBridgeCreateDraft as runProtonBridgeCreateDraft,
 	protonBridgeImportAttachments as runProtonBridgeImportAttachments,
 	protonBridgeListMailboxes as runProtonBridgeListMailboxes,
 	protonBridgeListMessages as runProtonBridgeListMessages,
+	protonBridgeMoveMessage as runProtonBridgeMoveMessage,
+	protonBridgeSendMessage as runProtonBridgeSendMessage,
 	protonBridgeStatus as runProtonBridgeStatus,
 } from "./proton-bridge.ts";
 import { resolveSecretReference } from "./secret-refs.ts";
 import type {
 	BridgeStatusResult,
 	CommandContext,
+	CreateDraftResult,
 	MailboxListResult,
 	MessageListResult,
+	MoveMessageResult,
 	ProtonBridgeConfig,
 	ProtonMailWorkingProfile,
+	SendMessageResult,
 	ToolContext,
 } from "./types.ts";
 import {
@@ -216,6 +222,13 @@ async function listProtonMessages(
 	return runProtonBridgeListMessages(config, mailbox, period, query, unseenOnly, limit);
 }
 
+function resolveOutgoingFrom(from: string | undefined, profile: ProtonMailWorkingProfile): string {
+	const resolved = from?.trim() || profile.policy.default_from?.trim();
+	if (!resolved)
+		throw new Error("No from address provided and the active profile has no default_from.");
+	return resolved;
+}
+
 function formatStatusSummary(result: BridgeStatusResult): string {
 	const lines = [
 		"# Proton Bridge Status",
@@ -294,6 +307,51 @@ function formatMessageSummary(result: MessageListResult, period?: string): strin
 
 	if (result.messages.length === 0) lines.push("| — | — | — | — | — |");
 	return lines.join("\n");
+}
+
+function formatCreateDraftSummary(result: CreateDraftResult): string {
+	const lines = [
+		"# Proton Mail draft created",
+		"",
+		`- Mailbox: \`${result.mailbox}\``,
+		`- UID: ${result.uid ? `\`${result.uid}\`` : "—"}`,
+		`- From: ${result.from}`,
+		`- To: ${result.to.join(", ")}`,
+		`- Subject: ${result.subject}`,
+		`- Attachments: ${result.attachment_count}`,
+	];
+	if (result.cc?.length) lines.push(`- Cc: ${result.cc.join(", ")}`);
+	if (result.bcc?.length) lines.push(`- Bcc: ${result.bcc.join(", ")}`);
+	return lines.join("\n");
+}
+
+function formatSendSummary(result: SendMessageResult): string {
+	const lines = [
+		"# Proton Mail message sent",
+		"",
+		`- Message ID: ${result.message_id ? `\`${result.message_id}\`` : "—"}`,
+		`- From: ${result.from}`,
+		`- To: ${result.to.join(", ")}`,
+		`- Subject: ${result.subject}`,
+		`- Attachments: ${result.attachment_count}`,
+	];
+	if (result.cc?.length) lines.push(`- Cc: ${result.cc.join(", ")}`);
+	if (result.bcc?.length) lines.push(`- Bcc: ${result.bcc.join(", ")}`);
+	if (result.saved_to_mailbox)
+		lines.push(
+			`- Saved copy: \`${result.saved_to_mailbox}\`${result.saved_uid ? ` UID ${result.saved_uid}` : ""}`,
+		);
+	return lines.join("\n");
+}
+
+function formatMoveSummary(result: MoveMessageResult): string {
+	return [
+		"# Proton Mail message moved",
+		"",
+		`- UID: \`${result.uid}\``,
+		`- Source: \`${result.source}\``,
+		`- Destination: \`${result.destination}\``,
+	].join("\n");
 }
 
 function formatImportSummary(
@@ -529,6 +587,193 @@ export default function registerProtonBridgeExtension(pi: ExtensionAPI) {
 		renderCall(args: { mailbox?: string; period?: string }, theme: Theme) {
 			return new Text(
 				`${theme.fg("toolTitle", theme.bold("protonmail_list_messages "))}${theme.fg("dim", `${args.mailbox ?? "default mailbox"}${args.period ? ` ${args.period}` : ""}`)}`,
+				0,
+				0,
+			);
+		},
+		renderResult: renderToolResult,
+	});
+
+	pi.registerTool({
+		name: "protonmail_create_draft",
+		label: "ProtonMail Create Draft",
+		description: "Create a Proton Mail draft through Bridge IMAP APPEND",
+		promptSnippet: "Create a draft with optional attachments in the Drafts mailbox",
+		promptGuidelines: [
+			"Use from when the sender must be explicit; otherwise the active profile default_from is used.",
+			"Attachments are local file paths and are embedded into a multipart MIME message before IMAP APPEND.",
+		],
+		parameters: Type.Object({
+			from: Type.Optional(
+				Type.String({ description: "Sender address; defaults to profile default_from" }),
+			),
+			to: Type.Array(Type.String(), { description: "Recipient email addresses" }),
+			cc: Type.Optional(Type.Array(Type.String(), { description: "Cc recipient email addresses" })),
+			bcc: Type.Optional(
+				Type.Array(Type.String(), { description: "Bcc recipient email addresses" }),
+			),
+			subject: Type.String({ description: "Email subject" }),
+			body: Type.String({ description: "Plain-text email body" }),
+			attachments: Type.Optional(
+				Type.Array(Type.String(), { description: "Local file paths to attach" }),
+			),
+			draftsMailbox: Type.Optional(
+				Type.String({ description: "Drafts mailbox name; defaults to Drafts" }),
+			),
+		}),
+		async execute(
+			_id: string,
+			params: {
+				from?: string;
+				to: string[];
+				cc?: string[];
+				bcc?: string[];
+				subject: string;
+				body: string;
+				attachments?: string[];
+				draftsMailbox?: string;
+			},
+			_signal: AbortSignal,
+			_onUpdate: unknown,
+			ctx: ToolContext,
+		) {
+			const profile = await resolveProtonMailActiveProfile(ctx.cwd);
+			const config = await getProtonBridgeConfig(profile.policy.default_mailbox);
+			if (!config.username || !config.password)
+				throw new Error(protonMailSetupHint(profile.profile));
+			const result = await runProtonBridgeCreateDraft(config, {
+				cwd: ctx.cwd,
+				from: resolveOutgoingFrom(params.from, profile),
+				to: params.to,
+				cc: params.cc,
+				bcc: params.bcc,
+				subject: params.subject,
+				body: params.body,
+				attachments: params.attachments,
+				draftsMailbox: params.draftsMailbox,
+			});
+			return {
+				content: [{ type: "text", text: trimText(formatCreateDraftSummary(result), 160, 16000) }],
+				details: result,
+			};
+		},
+		renderCall(args: { subject: string; to: string[] }, theme: Theme) {
+			return new Text(
+				`${theme.fg("toolTitle", theme.bold("protonmail_create_draft "))}${theme.fg("dim", `${args.subject} → ${args.to.join(", ")}`)}`,
+				0,
+				0,
+			);
+		},
+		renderResult: renderToolResult,
+	});
+
+	pi.registerTool({
+		name: "protonmail_send",
+		label: "ProtonMail Send",
+		description: "Send a Proton Mail message through Bridge SMTP",
+		promptSnippet: "Send a message with optional attachments through Proton Bridge SMTP",
+		promptGuidelines: [
+			"Use from when the sender must be explicit; otherwise the active profile default_from is used.",
+			"Use saveToMailbox only when a sent or issued copy should also be appended to an IMAP folder.",
+		],
+		parameters: Type.Object({
+			from: Type.Optional(
+				Type.String({ description: "Sender address; defaults to profile default_from" }),
+			),
+			to: Type.Array(Type.String(), { description: "Recipient email addresses" }),
+			cc: Type.Optional(Type.Array(Type.String(), { description: "Cc recipient email addresses" })),
+			bcc: Type.Optional(
+				Type.Array(Type.String(), { description: "Bcc recipient email addresses" }),
+			),
+			subject: Type.String({ description: "Email subject" }),
+			body: Type.String({ description: "Plain-text email body" }),
+			attachments: Type.Optional(
+				Type.Array(Type.String(), { description: "Local file paths to attach" }),
+			),
+			saveToMailbox: Type.Optional(
+				Type.String({ description: "Optional mailbox for appending a sent copy" }),
+			),
+		}),
+		async execute(
+			_id: string,
+			params: {
+				from?: string;
+				to: string[];
+				cc?: string[];
+				bcc?: string[];
+				subject: string;
+				body: string;
+				attachments?: string[];
+				saveToMailbox?: string;
+			},
+			_signal: AbortSignal,
+			_onUpdate: unknown,
+			ctx: ToolContext,
+		) {
+			const profile = await resolveProtonMailActiveProfile(ctx.cwd);
+			const config = await getProtonBridgeConfig(profile.policy.default_mailbox);
+			if (!config.username || !config.password)
+				throw new Error(protonMailSetupHint(profile.profile));
+			const result = await runProtonBridgeSendMessage(config, {
+				cwd: ctx.cwd,
+				from: resolveOutgoingFrom(params.from, profile),
+				to: params.to,
+				cc: params.cc,
+				bcc: params.bcc,
+				subject: params.subject,
+				body: params.body,
+				attachments: params.attachments,
+				saveToMailbox: params.saveToMailbox,
+			});
+			return {
+				content: [{ type: "text", text: trimText(formatSendSummary(result), 160, 16000) }],
+				details: result,
+			};
+		},
+		renderCall(args: { subject: string; to: string[] }, theme: Theme) {
+			return new Text(
+				`${theme.fg("toolTitle", theme.bold("protonmail_send "))}${theme.fg("dim", `${args.subject} → ${args.to.join(", ")}`)}`,
+				0,
+				0,
+			);
+		},
+		renderResult: renderToolResult,
+	});
+
+	pi.registerTool({
+		name: "protonmail_move_message",
+		label: "ProtonMail Move Message",
+		description: "Move a Proton Bridge message between IMAP mailboxes",
+		promptSnippet: "Move a message UID from one Proton folder to another",
+		promptGuidelines: [
+			"Use protonmail_list_messages first when you need to identify the source mailbox UID.",
+			"Pass the exact mailbox names returned by Proton Bridge.",
+		],
+		parameters: Type.Object({
+			mailbox: Type.String({ description: "Source mailbox name" }),
+			uid: Type.String({ description: "Message UID in the source mailbox" }),
+			destination: Type.String({ description: "Destination mailbox name" }),
+		}),
+		async execute(
+			_id: string,
+			params: { mailbox: string; uid: string; destination: string },
+			_signal: AbortSignal,
+			_onUpdate: unknown,
+			ctx: ToolContext,
+		) {
+			const profile = await resolveProtonMailActiveProfile(ctx.cwd);
+			const config = await getProtonBridgeConfig(profile.policy.default_mailbox);
+			if (!config.username || !config.password)
+				throw new Error(protonMailSetupHint(profile.profile));
+			const result = await runProtonBridgeMoveMessage(config, params);
+			return {
+				content: [{ type: "text", text: trimText(formatMoveSummary(result), 160, 16000) }],
+				details: result,
+			};
+		},
+		renderCall(args: { mailbox: string; uid: string; destination: string }, theme: Theme) {
+			return new Text(
+				`${theme.fg("toolTitle", theme.bold("protonmail_move_message "))}${theme.fg("dim", `${args.mailbox} UID ${args.uid} → ${args.destination}`)}`,
 				0,
 				0,
 			);
