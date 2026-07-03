@@ -222,7 +222,7 @@ async function listProtonMessages(
 	unseenOnly = false,
 	limit = 20,
 	defaultMailbox?: string,
-	includeWithoutAttachments = false,
+	attachmentsOnly = false,
 	searchFields?: string[],
 ): Promise<MessageListResult> {
 	const config = await getProtonBridgeConfig(defaultMailbox);
@@ -234,7 +234,7 @@ async function listProtonMessages(
 		query,
 		unseenOnly,
 		limit,
-		includeWithoutAttachments,
+		attachmentsOnly,
 		searchFields,
 	);
 }
@@ -615,8 +615,8 @@ export default function registerProtonBridgeExtension(pi: ExtensionAPI) {
 	pi.registerTool({
 		name: "protonmail_list_messages",
 		label: "ProtonMail List Messages",
-		description: "List recent Proton Bridge messages, attachment-only by default",
-		promptSnippet: "Preview Proton Bridge messages before importing files",
+		description: "List recent Proton Bridge messages from a mailbox",
+		promptSnippet: "Preview Proton Bridge messages before reading, moving, or importing mail",
 		promptGuidelines: [
 			"Pass an explicit mailbox or rely on the active profile default mailbox.",
 			"Use period to narrow the scan to one month such as 2026-04.",
@@ -636,8 +636,8 @@ export default function registerProtonBridgeExtension(pi: ExtensionAPI) {
 						"Fields to search: subject, from, to, cc, bcc, body, headers, attachments, messageId",
 				}),
 			),
-			includeWithoutAttachments: Type.Optional(
-				Type.Boolean({ description: "If true, include messages with no attachments" }),
+			attachmentsOnly: Type.Optional(
+				Type.Boolean({ description: "If true, return only messages with attachments" }),
 			),
 			unseenOnly: Type.Optional(Type.Boolean({ description: "If true, limit to unseen messages" })),
 			limit: Type.Optional(Type.Number({ description: "Maximum number of messages to return" })),
@@ -649,7 +649,7 @@ export default function registerProtonBridgeExtension(pi: ExtensionAPI) {
 				period?: string;
 				query?: string;
 				searchIn?: string[];
-				includeWithoutAttachments?: boolean;
+				attachmentsOnly?: boolean;
 				unseenOnly?: boolean;
 				limit?: number;
 			},
@@ -671,7 +671,7 @@ export default function registerProtonBridgeExtension(pi: ExtensionAPI) {
 				params.unseenOnly ?? false,
 				params.limit ?? 20,
 				profile.policy.default_mailbox,
-				params.includeWithoutAttachments ?? false,
+				params.attachmentsOnly ?? false,
 				params.searchIn,
 			);
 			return {

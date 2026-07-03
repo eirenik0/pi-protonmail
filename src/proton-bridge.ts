@@ -487,7 +487,7 @@ export async function protonBridgeListMessages(
 	query?: string,
 	unseenOnly = false,
 	limit = 20,
-	includeWithoutAttachments = false,
+	attachmentsOnly = false,
 	searchFields?: string[],
 ): Promise<MessageListResult> {
 	if (!config.username || !config.password)
@@ -503,7 +503,7 @@ export async function protonBridgeListMessages(
 		for (const uid of [...uids].reverse()) {
 			const { parsed, source } = await fetchParsedMessage(client, uid);
 			const summary = messageFromParsed(uid, parsed, source.length);
-			if (!includeWithoutAttachments && !summary.attachment_count) continue;
+			if (attachmentsOnly && !summary.attachment_count) continue;
 			if (!matchesQuery(summary, parsed, query, searchFields)) continue;
 			messages.push(summary);
 			if (messages.length >= limit) break;

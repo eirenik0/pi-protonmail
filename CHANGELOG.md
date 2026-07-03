@@ -3,7 +3,7 @@
 ## Unreleased
 
 - Added `protonmail_get_message` for reading a single message's metadata, body, headers, and attachments by mailbox UID.
-- Added `includeWithoutAttachments` to `protonmail_list_messages` for listing non-attachment mail when requested.
+- Changed `protonmail_list_messages` to list all messages by default with an `attachmentsOnly` filter for attachment-only views.
 - Added `protonmail_copy_message` for copying messages between IMAP mailboxes without moving the source.
 - Improved label application errors when a requested Proton label mailbox cannot be resolved.
 - Added optional `labels` to `protonmail_send` for labeling saved sent copies.

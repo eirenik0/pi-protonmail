@@ -18,9 +18,9 @@ Message summaries should include UID, sender, subject, date, and attachment name
 
 Message listing should return an empty result for a mailbox or period with no matches instead of crashing when IMAP search returns no UIDs.
 
-### Includes messages without attachments
+### Filters by attachments
 
-Message listing should remain attachment-only by default, but it should include non-attachment messages when callers opt in for sent-mail or archive searches.
+Message listing should include messages without attachments by default, but it should return only attachment-bearing messages when callers set the attachments-only filter.
 
 ### Searches selected fields
 
