@@ -7,6 +7,7 @@
 - Added `protonmail_copy_message` for copying messages between IMAP mailboxes without moving the source.
 - Improved label application errors when a requested Proton label mailbox cannot be resolved.
 - Added optional `labels` to `protonmail_send` for labeling saved sent copies.
+- Fixed copied UID reporting for `protonmail_copy_message` responses.
 
 ## 0.2.0 - 2026-07-02
 

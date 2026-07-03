@@ -348,6 +348,14 @@ function appendUid(result: unknown): string | undefined {
 	return uid == null ? undefined : String(uid);
 }
 
+function copyUid(result: unknown, sourceUid: string): string | undefined {
+	if (!result || typeof result !== "object" || !("uidMap" in result)) return undefined;
+	const uidMap = (result as { uidMap?: Map<number, number> }).uidMap;
+	if (!uidMap || typeof uidMap.get !== "function") return undefined;
+	const copiedUid = uidMap.get(Number(sourceUid));
+	return copiedUid == null ? undefined : String(copiedUid);
+}
+
 function allRecipients(options: OutgoingMessageOptions): string[] {
 	return [...options.to, ...(options.cc ?? []), ...(options.bcc ?? [])].filter(Boolean);
 }
@@ -652,7 +660,7 @@ export async function protonBridgeCopyMessage(
 			uid: options.uid,
 			source: options.mailbox,
 			destination: options.destination,
-			copied_uid: appendUid(result),
+			copied_uid: copyUid(result, options.uid),
 		};
 	} finally {
 		await client?.logout().catch(() => undefined);
