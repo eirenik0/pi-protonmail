@@ -56,6 +56,10 @@ Message copying should open the source mailbox by UID and copy the selected mess
 
 Label application should copy the selected UID into each resolved label mailbox while leaving the message in its source mailbox.
 
+### Missing label mailbox
+
+Label application should fail with a clear available-label hint when a requested bare label or label mailbox path cannot be resolved.
+
 ## Profile default_from
 
 Outgoing tools should use an explicit `from` value first and otherwise require the active profile policy to provide `default_from`.

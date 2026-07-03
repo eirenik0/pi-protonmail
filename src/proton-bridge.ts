@@ -379,7 +379,14 @@ function resolveLabelMailbox(label: string, mailboxes: MailboxInfo[]): string {
 		const match = mailboxes.find((mailbox) => mailbox.name.toLowerCase() === lower);
 		if (match) return match.name;
 	}
-	return trimmed;
+	const available = mailboxes
+		.filter((mailbox) => mailbox.name.toLowerCase().includes("label"))
+		.slice(0, 20)
+		.map((mailbox) => mailbox.name);
+	const hint = available.length
+		? ` Available label mailboxes: ${available.join(", ")}.`
+		: " Run protonmail_list_mailboxes to inspect available label mailbox paths.";
+	throw new Error(`Label mailbox "${trimmed}" was not found.${hint}`);
 }
 
 export async function protonBridgeStatus(config: ProtonBridgeConfig): Promise<BridgeStatusResult> {
