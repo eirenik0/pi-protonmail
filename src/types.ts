@@ -127,6 +127,13 @@ export interface MoveMessageResult {
 	destination: string;
 }
 
+export interface CopyMessageResult {
+	uid: string;
+	source: string;
+	destination: string;
+	copied_uid?: string;
+}
+
 export interface ApplyLabelsResult {
 	uid: string;
 	mailbox: string;

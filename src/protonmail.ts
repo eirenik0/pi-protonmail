@@ -11,6 +11,7 @@ import { PREVIEW_LINES } from "./constants.ts";
 import { openProtonMailHub } from "./hub.ts";
 import {
 	protonBridgeApplyLabels as runProtonBridgeApplyLabels,
+	protonBridgeCopyMessage as runProtonBridgeCopyMessage,
 	protonBridgeCreateDraft as runProtonBridgeCreateDraft,
 	protonBridgeGetMessage as runProtonBridgeGetMessage,
 	protonBridgeImportAttachments as runProtonBridgeImportAttachments,
@@ -25,6 +26,7 @@ import type {
 	ApplyLabelsResult,
 	BridgeStatusResult,
 	CommandContext,
+	CopyMessageResult,
 	CreateDraftResult,
 	GetMessageResult,
 	MailboxListResult,
@@ -405,6 +407,17 @@ function formatMoveSummary(result: MoveMessageResult): string {
 		"# Proton Mail message moved",
 		"",
 		`- UID: \`${result.uid}\``,
+		`- Source: \`${result.source}\``,
+		`- Destination: \`${result.destination}\``,
+	].join("\n");
+}
+
+function formatCopySummary(result: CopyMessageResult): string {
+	return [
+		"# Proton Mail message copied",
+		"",
+		`- Source UID: \`${result.uid}\``,
+		`- Copied UID: ${result.copied_uid ? `\`${result.copied_uid}\`` : "—"}`,
 		`- Source: \`${result.source}\``,
 		`- Destination: \`${result.destination}\``,
 	].join("\n");
@@ -896,6 +909,47 @@ export default function registerProtonBridgeExtension(pi: ExtensionAPI) {
 		renderCall(args: { mailbox: string; uid: string; destination: string }, theme: Theme) {
 			return new Text(
 				`${theme.fg("toolTitle", theme.bold("protonmail_move_message "))}${theme.fg("dim", `${args.mailbox} UID ${args.uid} → ${args.destination}`)}`,
+				0,
+				0,
+			);
+		},
+		renderResult: renderToolResult,
+	});
+
+	pi.registerTool({
+		name: "protonmail_copy_message",
+		label: "ProtonMail Copy Message",
+		description: "Copy a Proton Bridge message between IMAP mailboxes",
+		promptSnippet: "Copy a message UID from one Proton folder to another",
+		promptGuidelines: [
+			"Use protonmail_list_messages first when you need to identify the source mailbox UID.",
+			"Pass the exact mailbox names returned by Proton Bridge.",
+		],
+		parameters: Type.Object({
+			mailbox: Type.String({ description: "Source mailbox name" }),
+			uid: Type.String({ description: "Message UID in the source mailbox" }),
+			destination: Type.String({ description: "Destination mailbox name" }),
+		}),
+		async execute(
+			_id: string,
+			params: { mailbox: string; uid: string; destination: string },
+			_signal: AbortSignal,
+			_onUpdate: unknown,
+			ctx: ToolContext,
+		) {
+			const profile = await resolveProtonMailActiveProfile(ctx.cwd);
+			const config = await getProtonBridgeConfig(profile.policy.default_mailbox);
+			if (!config.username || !config.password)
+				throw new Error(protonMailSetupHint(profile.profile));
+			const result = await runProtonBridgeCopyMessage(config, params);
+			return {
+				content: [{ type: "text", text: trimText(formatCopySummary(result), 160, 16000) }],
+				details: result,
+			};
+		},
+		renderCall(args: { mailbox: string; uid: string; destination: string }, theme: Theme) {
+			return new Text(
+				`${theme.fg("toolTitle", theme.bold("protonmail_copy_message "))}${theme.fg("dim", `${args.mailbox} UID ${args.uid} → ${args.destination}`)}`,
 				0,
 				0,
 			);

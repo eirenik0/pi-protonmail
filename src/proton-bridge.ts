@@ -11,6 +11,7 @@ import type Mail from "nodemailer/lib/mailer/index.js";
 import type {
 	ApplyLabelsResult,
 	BridgeStatusResult,
+	CopyMessageResult,
 	CreateDraftResult,
 	GetMessageResult,
 	MailboxInfo,
@@ -89,6 +90,12 @@ interface SendMessageOptions extends OutgoingMessageOptions {
 }
 
 interface MoveMessageOptions {
+	mailbox: string;
+	uid: string;
+	destination: string;
+}
+
+interface CopyMessageOptions {
 	mailbox: string;
 	uid: string;
 	destination: string;
@@ -598,6 +605,27 @@ export async function protonBridgeMoveMessage(
 			uid: options.uid,
 			source: options.mailbox,
 			destination: options.destination,
+		};
+	} finally {
+		await client?.logout().catch(() => undefined);
+	}
+}
+
+export async function protonBridgeCopyMessage(
+	config: ProtonBridgeConfig,
+	options: CopyMessageOptions,
+): Promise<CopyMessageResult> {
+	requireBridgeCredentials(config);
+	let client: ImapFlow | undefined;
+	try {
+		client = await connectImap(config);
+		await client.mailboxOpen(options.mailbox, { readOnly: false });
+		const result = await client.messageCopy(options.uid, options.destination, { uid: true });
+		return {
+			uid: options.uid,
+			source: options.mailbox,
+			destination: options.destination,
+			copied_uid: appendUid(result),
 		};
 	} finally {
 		await client?.logout().catch(() => undefined);

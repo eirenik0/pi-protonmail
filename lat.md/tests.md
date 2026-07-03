@@ -48,6 +48,10 @@ Message sending should use Proton Bridge SMTP for delivery and optionally append
 
 Message moving should open the source mailbox by UID and move the selected message to the requested Proton destination folder.
 
+## Message copying
+
+Message copying should open the source mailbox by UID and copy the selected message to the requested Proton destination without removing the source message.
+
 ## Label application
 
 Label application should copy the selected UID into each resolved label mailbox while leaving the message in its source mailbox.
