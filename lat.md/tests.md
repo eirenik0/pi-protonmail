@@ -18,6 +18,10 @@ Message summaries should include UID, sender, subject, date, and attachment name
 
 Message listing should return an empty result for a mailbox or period with no matches instead of crashing when IMAP search returns no UIDs.
 
+## Message reading
+
+Reading a single message should return parsed address fields, subject, date, bodies, headers, attachment metadata, and raw size for the requested mailbox UID.
+
 ## TUI navigation
 
 The Proton Mail setup hub should preserve the active profile while users edit defaults.

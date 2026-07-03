@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Added `protonmail_get_message` for reading a single message's metadata, body, headers, and attachments by mailbox UID.
+
 ## 0.2.0 - 2026-07-02
 
 - Added outgoing Proton Bridge tools for draft creation, SMTP sending, message moving, and label application.

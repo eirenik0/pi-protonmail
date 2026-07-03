@@ -12,6 +12,7 @@ import type {
 	ApplyLabelsResult,
 	BridgeStatusResult,
 	CreateDraftResult,
+	GetMessageResult,
 	MailboxInfo,
 	MailboxListResult,
 	MessageInfo,
@@ -70,6 +71,13 @@ interface OutgoingMessageOptions {
 	subject: string;
 	body: string;
 	attachments?: string[];
+}
+
+interface GetMessageOptions {
+	mailbox: string;
+	uid: string;
+	includeBody?: boolean;
+	includeHeaders?: boolean;
 }
 
 interface CreateDraftOptions extends OutgoingMessageOptions {
@@ -341,6 +349,17 @@ function messageIdFromRaw(raw: Buffer): string | undefined {
 	return match?.[1]?.trim();
 }
 
+function headersFromParsed(
+	parsed: Awaited<ReturnType<typeof simpleParser>>,
+): GetMessageResult["headers"] {
+	return [...parsed.headers.entries()].map(([name, value]) => ({
+		name,
+		value: Array.isArray(value)
+			? value.map((item) => toStringValue(item)).join(", ")
+			: toStringValue(value),
+	}));
+}
+
 function resolveLabelMailbox(label: string, mailboxes: MailboxInfo[]): string {
 	const trimmed = label.trim();
 	const candidates = [trimmed, `Labels/${trimmed}`];
@@ -442,6 +461,35 @@ export async function protonBridgeListMessages(
 			if (messages.length >= limit) break;
 		}
 		return { mailbox: selectedMailbox, count: messages.length, messages };
+	} finally {
+		await client?.logout().catch(() => undefined);
+	}
+}
+
+export async function protonBridgeGetMessage(
+	config: ProtonBridgeConfig,
+	options: GetMessageOptions,
+): Promise<GetMessageResult> {
+	requireBridgeCredentials(config);
+	let client: ImapFlow | undefined;
+	try {
+		client = await connectImap(config);
+		await client.mailboxOpen(options.mailbox, { readOnly: true });
+		const { parsed, source } = await fetchParsedMessage(client, options.uid);
+		const summary = messageFromParsed(options.uid, parsed, source.length);
+		return {
+			...summary,
+			mailbox: options.mailbox,
+			to: parsed.to?.text?.trim() || undefined,
+			cc: parsed.cc?.text?.trim() || undefined,
+			bcc: parsed.bcc?.text?.trim() || undefined,
+			text_body: options.includeBody === false ? undefined : parsed.text?.trim() || undefined,
+			html_body:
+				options.includeBody === false || typeof parsed.html !== "string"
+					? undefined
+					: parsed.html.trim() || undefined,
+			headers: options.includeHeaders === false ? undefined : headersFromParsed(parsed),
+		};
 	} finally {
 		await client?.logout().catch(() => undefined);
 	}

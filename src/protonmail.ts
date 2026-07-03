@@ -12,6 +12,7 @@ import { openProtonMailHub } from "./hub.ts";
 import {
 	protonBridgeApplyLabels as runProtonBridgeApplyLabels,
 	protonBridgeCreateDraft as runProtonBridgeCreateDraft,
+	protonBridgeGetMessage as runProtonBridgeGetMessage,
 	protonBridgeImportAttachments as runProtonBridgeImportAttachments,
 	protonBridgeListMailboxes as runProtonBridgeListMailboxes,
 	protonBridgeListMessages as runProtonBridgeListMessages,
@@ -25,6 +26,7 @@ import type {
 	BridgeStatusResult,
 	CommandContext,
 	CreateDraftResult,
+	GetMessageResult,
 	MailboxListResult,
 	MessageListResult,
 	MoveMessageResult,
@@ -224,6 +226,19 @@ async function listProtonMessages(
 	return runProtonBridgeListMessages(config, mailbox, period, query, unseenOnly, limit);
 }
 
+async function getProtonMessage(
+	_cwd: string,
+	mailbox: string,
+	uid: string,
+	includeBody = true,
+	includeHeaders = true,
+	defaultMailbox?: string,
+): Promise<GetMessageResult> {
+	const config = await getProtonBridgeConfig(defaultMailbox);
+	if (!config.username || !config.password) throw new Error(protonMailSetupHint(defaultMailbox));
+	return runProtonBridgeGetMessage(config, { mailbox, uid, includeBody, includeHeaders });
+}
+
 function resolveOutgoingFrom(from: string | undefined, profile: ProtonMailWorkingProfile): string {
 	const resolved = from?.trim() || profile.policy.default_from?.trim();
 	if (!resolved)
@@ -308,6 +323,36 @@ function formatMessageSummary(result: MessageListResult, period?: string): strin
 	});
 
 	if (result.messages.length === 0) lines.push("| — | — | — | — | — |");
+	return lines.join("\n");
+}
+
+function formatGetMessageSummary(result: GetMessageResult): string {
+	const lines = [
+		`# Proton Bridge Message — ${result.mailbox} UID ${result.uid}`,
+		"",
+		`- Message ID: ${result.message_id ? `\`${result.message_id}\`` : "—"}`,
+		`- Date: ${result.date ?? "—"}`,
+		`- From: ${result.from ?? "—"}`,
+		`- To: ${result.to ?? "—"}`,
+		`- Subject: ${result.subject ?? "—"}`,
+		`- Attachments: ${result.attachment_count}`,
+	];
+	if (result.cc) lines.push(`- Cc: ${result.cc}`);
+	if (result.bcc) lines.push(`- Bcc: ${result.bcc}`);
+	if (result.attachments.length) {
+		lines.push("", "## Attachments", "");
+		for (const attachment of result.attachments) {
+			lines.push(
+				`- ${attachment.filename} (${attachment.size ?? 0} B, ${attachment.content_type ?? "application/octet-stream"})`,
+			);
+		}
+	}
+	if (result.text_body) lines.push("", "## Text body", "", result.text_body);
+	if (result.html_body) lines.push("", "## HTML body", "", result.html_body);
+	if (result.headers?.length) {
+		lines.push("", "## Headers", "");
+		for (const header of result.headers) lines.push(`- ${header.name}: ${header.value}`);
+	}
 	return lines.join("\n");
 }
 
@@ -600,6 +645,56 @@ export default function registerProtonBridgeExtension(pi: ExtensionAPI) {
 		renderCall(args: { mailbox?: string; period?: string }, theme: Theme) {
 			return new Text(
 				`${theme.fg("toolTitle", theme.bold("protonmail_list_messages "))}${theme.fg("dim", `${args.mailbox ?? "default mailbox"}${args.period ? ` ${args.period}` : ""}`)}`,
+				0,
+				0,
+			);
+		},
+		renderResult: renderToolResult,
+	});
+
+	pi.registerTool({
+		name: "protonmail_get_message",
+		label: "ProtonMail Get Message",
+		description: "Read a Proton Bridge message by mailbox UID",
+		promptSnippet: "Fetch one message's metadata, body, headers, and attachment list",
+		promptGuidelines: [
+			"Use protonmail_list_messages first when you need to identify the mailbox UID.",
+			"Set includeBody or includeHeaders to false when only metadata is needed.",
+		],
+		parameters: Type.Object({
+			mailbox: Type.String({ description: "Mailbox name containing the message" }),
+			uid: Type.String({ description: "Message UID in the mailbox" }),
+			includeBody: Type.Optional(
+				Type.Boolean({ description: "If false, omit text and HTML body content" }),
+			),
+			includeHeaders: Type.Optional(
+				Type.Boolean({ description: "If false, omit parsed message headers" }),
+			),
+		}),
+		async execute(
+			_id: string,
+			params: { mailbox: string; uid: string; includeBody?: boolean; includeHeaders?: boolean },
+			_signal: AbortSignal,
+			_onUpdate: unknown,
+			ctx: ToolContext,
+		) {
+			const profile = await resolveProtonMailActiveProfile(ctx.cwd);
+			const result = await getProtonMessage(
+				ctx.cwd,
+				params.mailbox,
+				params.uid,
+				params.includeBody ?? true,
+				params.includeHeaders ?? true,
+				profile.policy.default_mailbox,
+			);
+			return {
+				content: [{ type: "text", text: trimText(formatGetMessageSummary(result), 240, 24000) }],
+				details: result,
+			};
+		},
+		renderCall(args: { mailbox: string; uid: string }, theme: Theme) {
+			return new Text(
+				`${theme.fg("toolTitle", theme.bold("protonmail_get_message "))}${theme.fg("dim", `${args.mailbox} UID ${args.uid}`)}`,
 				0,
 				0,
 			);

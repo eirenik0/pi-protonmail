@@ -83,6 +83,21 @@ export interface MessageListResult {
 	messages: MessageInfo[];
 }
 
+export interface MessageHeaderInfo {
+	name: string;
+	value: string;
+}
+
+export interface GetMessageResult extends MessageInfo {
+	mailbox: string;
+	to?: string;
+	cc?: string;
+	bcc?: string;
+	text_body?: string;
+	html_body?: string;
+	headers?: MessageHeaderInfo[];
+}
+
 export interface CreateDraftResult {
 	mailbox: string;
 	uid?: string;
