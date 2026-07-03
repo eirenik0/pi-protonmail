@@ -1,6 +1,6 @@
 # Proton Mail Bridge Pi extension
 
-This repo packages a Pi extension for Proton Bridge mailbox discovery, message previews, and a profile-based setup hub.
+This repo packages a Pi extension for Proton Bridge mailbox discovery, message workflows, attachment imports, and a profile-based setup hub.
 
 ## Repository overview
 
@@ -29,7 +29,7 @@ Main implementation for the `/protonmail` command, LLM tool registration, bridge
 
 ### `src/proton-bridge.ts`
 
-Native IMAP/login/list/import implementation for Proton Bridge operations using ImapFlow and mailparser.
+Native IMAP/login/list/read/copy/move/import implementation for Proton Bridge operations using ImapFlow and mailparser.
 
 ### `src/hub.ts`
 

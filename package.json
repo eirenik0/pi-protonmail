@@ -1,8 +1,8 @@
 {
 	"name": "pi-protonmail",
-	"version": "0.2.0",
+	"version": "0.3.0",
 	"type": "module",
-	"description": "Proton Mail Bridge Pi extension for mailbox discovery and attachment imports.",
+	"description": "Proton Mail Bridge Pi extension for mailbox discovery, message workflows, and attachment imports.",
 	"homepage": "https://github.com/eirenik0/pi-protonmail#readme",
 	"repository": {
 		"type": "git",

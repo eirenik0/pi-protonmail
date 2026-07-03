@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.3.0 - 2026-07-03
+
 - Added `protonmail_get_message` for reading a single message's metadata, body, headers, and attachments by mailbox UID.
 - Changed `protonmail_list_messages` to list all messages by default with an `attachmentsOnly` filter for attachment-only views.
 - Added `protonmail_copy_message` for copying messages between IMAP mailboxes without moving the source.
