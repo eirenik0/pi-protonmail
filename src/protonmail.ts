@@ -223,6 +223,7 @@ async function listProtonMessages(
 	limit = 20,
 	defaultMailbox?: string,
 	includeWithoutAttachments = false,
+	searchFields?: string[],
 ): Promise<MessageListResult> {
 	const config = await getProtonBridgeConfig(defaultMailbox);
 	if (!config.username || !config.password) throw new Error(protonMailSetupHint(defaultMailbox));
@@ -234,6 +235,7 @@ async function listProtonMessages(
 		unseenOnly,
 		limit,
 		includeWithoutAttachments,
+		searchFields,
 	);
 }
 
@@ -618,6 +620,7 @@ export default function registerProtonBridgeExtension(pi: ExtensionAPI) {
 		promptGuidelines: [
 			"Pass an explicit mailbox or rely on the active profile default mailbox.",
 			"Use period to narrow the scan to one month such as 2026-04.",
+			"Use searchIn to search fields beyond the default subject/from/messageId/attachments set.",
 		],
 		parameters: Type.Object({
 			mailbox: Type.Optional(
@@ -626,8 +629,12 @@ export default function registerProtonBridgeExtension(pi: ExtensionAPI) {
 				}),
 			),
 			period: Type.Optional(Type.String({ description: "Optional month filter such as 2026-04" })),
-			query: Type.Optional(
-				Type.String({ description: "Optional subject/from/attachment substring filter" }),
+			query: Type.Optional(Type.String({ description: "Optional substring filter" })),
+			searchIn: Type.Optional(
+				Type.Array(Type.String(), {
+					description:
+						"Fields to search: subject, from, to, cc, bcc, body, headers, attachments, messageId",
+				}),
 			),
 			includeWithoutAttachments: Type.Optional(
 				Type.Boolean({ description: "If true, include messages with no attachments" }),
@@ -641,6 +648,7 @@ export default function registerProtonBridgeExtension(pi: ExtensionAPI) {
 				mailbox?: string;
 				period?: string;
 				query?: string;
+				searchIn?: string[];
 				includeWithoutAttachments?: boolean;
 				unseenOnly?: boolean;
 				limit?: number;
@@ -664,6 +672,7 @@ export default function registerProtonBridgeExtension(pi: ExtensionAPI) {
 				params.limit ?? 20,
 				profile.policy.default_mailbox,
 				params.includeWithoutAttachments ?? false,
+				params.searchIn,
 			);
 			return {
 				content: [

@@ -266,15 +266,38 @@ function messageFromParsed(
 	};
 }
 
-function matchesQuery(summary: MessageInfo, query?: string): boolean {
+function matchesQuery(
+	summary: MessageInfo,
+	parsed: Awaited<ReturnType<typeof simpleParser>>,
+	query?: string,
+	searchFields?: string[],
+): boolean {
 	if (!query?.trim()) return true;
 	const needle = query.trim().toLowerCase();
-	const values = [
-		summary.subject,
-		summary.from,
-		summary.message_id,
-		...summary.attachments.map((attachment) => attachment.filename),
-	];
+	const fields = new Set(
+		(searchFields?.length ? searchFields : ["subject", "from", "messageId", "attachments"]).map(
+			(field) => field.toLowerCase(),
+		),
+	);
+	const values: Array<string | undefined> = [];
+	if (fields.has("subject")) values.push(summary.subject);
+	if (fields.has("from")) values.push(summary.from);
+	if (fields.has("to")) values.push(parsed.to?.text);
+	if (fields.has("cc")) values.push(parsed.cc?.text);
+	if (fields.has("bcc")) values.push(parsed.bcc?.text);
+	if (fields.has("messageid") || fields.has("message-id")) values.push(summary.message_id);
+	if (fields.has("attachments")) {
+		values.push(...summary.attachments.map((attachment) => attachment.filename));
+	}
+	if (fields.has("body")) {
+		values.push(parsed.text);
+		if (typeof parsed.html === "string") values.push(parsed.html);
+	}
+	if (fields.has("headers")) {
+		values.push(
+			...[...parsed.headers.entries()].map(([name, value]) => `${name}: ${toStringValue(value)}`),
+		);
+	}
 	return values.some((value) => value?.toLowerCase().includes(needle));
 }
 
@@ -465,6 +488,7 @@ export async function protonBridgeListMessages(
 	unseenOnly = false,
 	limit = 20,
 	includeWithoutAttachments = false,
+	searchFields?: string[],
 ): Promise<MessageListResult> {
 	if (!config.username || !config.password)
 		throw new Error("Missing Proton Bridge username/password.");
@@ -480,7 +504,7 @@ export async function protonBridgeListMessages(
 			const { parsed, source } = await fetchParsedMessage(client, uid);
 			const summary = messageFromParsed(uid, parsed, source.length);
 			if (!includeWithoutAttachments && !summary.attachment_count) continue;
-			if (!matchesQuery(summary, query)) continue;
+			if (!matchesQuery(summary, parsed, query, searchFields)) continue;
 			messages.push(summary);
 			if (messages.length >= limit) break;
 		}

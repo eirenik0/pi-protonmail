@@ -22,6 +22,10 @@ Message listing should return an empty result for a mailbox or period with no ma
 
 Message listing should remain attachment-only by default, but it should include non-attachment messages when callers opt in for sent-mail or archive searches.
 
+### Searches selected fields
+
+Message listing should keep the default query scope stable while allowing callers to search recipients, body text, headers, attachments, and message IDs explicitly.
+
 ## Message reading
 
 Reading a single message should return parsed address fields, subject, date, bodies, headers, attachment metadata, and raw size for the requested mailbox UID.

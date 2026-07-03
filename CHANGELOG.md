@@ -8,6 +8,7 @@
 - Improved label application errors when a requested Proton label mailbox cannot be resolved.
 - Added optional `labels` to `protonmail_send` for labeling saved sent copies.
 - Fixed copied UID reporting for `protonmail_copy_message` responses.
+- Added `searchIn` to `protonmail_list_messages` for searching recipients, bodies, headers, and message metadata.
 
 ## 0.2.0 - 2026-07-02
 
