@@ -441,6 +441,7 @@ export async function protonBridgeListMessages(
 	query?: string,
 	unseenOnly = false,
 	limit = 20,
+	includeWithoutAttachments = false,
 ): Promise<MessageListResult> {
 	if (!config.username || !config.password)
 		throw new Error("Missing Proton Bridge username/password.");
@@ -455,7 +456,7 @@ export async function protonBridgeListMessages(
 		for (const uid of [...uids].reverse()) {
 			const { parsed, source } = await fetchParsedMessage(client, uid);
 			const summary = messageFromParsed(uid, parsed, source.length);
-			if (!summary.attachment_count) continue;
+			if (!includeWithoutAttachments && !summary.attachment_count) continue;
 			if (!matchesQuery(summary, query)) continue;
 			messages.push(summary);
 			if (messages.length >= limit) break;

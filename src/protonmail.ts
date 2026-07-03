@@ -220,10 +220,19 @@ async function listProtonMessages(
 	unseenOnly = false,
 	limit = 20,
 	defaultMailbox?: string,
+	includeWithoutAttachments = false,
 ): Promise<MessageListResult> {
 	const config = await getProtonBridgeConfig(defaultMailbox);
 	if (!config.username || !config.password) throw new Error(protonMailSetupHint(defaultMailbox));
-	return runProtonBridgeListMessages(config, mailbox, period, query, unseenOnly, limit);
+	return runProtonBridgeListMessages(
+		config,
+		mailbox,
+		period,
+		query,
+		unseenOnly,
+		limit,
+		includeWithoutAttachments,
+	);
 }
 
 async function getProtonMessage(
@@ -585,7 +594,7 @@ export default function registerProtonBridgeExtension(pi: ExtensionAPI) {
 	pi.registerTool({
 		name: "protonmail_list_messages",
 		label: "ProtonMail List Messages",
-		description: "List recent attachment-bearing messages from a Proton Bridge mailbox",
+		description: "List recent Proton Bridge messages, attachment-only by default",
 		promptSnippet: "Preview Proton Bridge messages before importing files",
 		promptGuidelines: [
 			"Pass an explicit mailbox or rely on the active profile default mailbox.",
@@ -601,6 +610,9 @@ export default function registerProtonBridgeExtension(pi: ExtensionAPI) {
 			query: Type.Optional(
 				Type.String({ description: "Optional subject/from/attachment substring filter" }),
 			),
+			includeWithoutAttachments: Type.Optional(
+				Type.Boolean({ description: "If true, include messages with no attachments" }),
+			),
 			unseenOnly: Type.Optional(Type.Boolean({ description: "If true, limit to unseen messages" })),
 			limit: Type.Optional(Type.Number({ description: "Maximum number of messages to return" })),
 		}),
@@ -610,6 +622,7 @@ export default function registerProtonBridgeExtension(pi: ExtensionAPI) {
 				mailbox?: string;
 				period?: string;
 				query?: string;
+				includeWithoutAttachments?: boolean;
 				unseenOnly?: boolean;
 				limit?: number;
 			},
@@ -631,6 +644,7 @@ export default function registerProtonBridgeExtension(pi: ExtensionAPI) {
 				params.unseenOnly ?? false,
 				params.limit ?? 20,
 				profile.policy.default_mailbox,
+				params.includeWithoutAttachments ?? false,
 			);
 			return {
 				content: [

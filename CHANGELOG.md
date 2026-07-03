@@ -3,6 +3,7 @@
 ## Unreleased
 
 - Added `protonmail_get_message` for reading a single message's metadata, body, headers, and attachments by mailbox UID.
+- Added `includeWithoutAttachments` to `protonmail_list_messages` for listing non-attachment mail when requested.
 
 ## 0.2.0 - 2026-07-02
 
