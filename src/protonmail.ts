@@ -399,6 +399,12 @@ function formatSendSummary(result: SendMessageResult): string {
 		lines.push(
 			`- Saved copy: \`${result.saved_to_mailbox}\`${result.saved_uid ? ` UID ${result.saved_uid}` : ""}`,
 		);
+	if (result.labels?.length)
+		lines.push(`- Labels: ${result.labels.map((label) => `\`${label}\``).join(", ")}`);
+	if (result.label_mailboxes?.length)
+		lines.push(
+			`- Label mailboxes: ${result.label_mailboxes.map((label) => `\`${label}\``).join(", ")}`,
+		);
 	return lines.join("\n");
 }
 
@@ -810,6 +816,7 @@ export default function registerProtonBridgeExtension(pi: ExtensionAPI) {
 		promptGuidelines: [
 			"Use from when the sender must be explicit; otherwise the active profile default_from is used.",
 			"Use saveToMailbox only when a sent or issued copy should also be appended to an IMAP folder.",
+			"Labels can be applied only when saveToMailbox is also provided, because the saved copy UID is labeled.",
 		],
 		parameters: Type.Object({
 			from: Type.Optional(
@@ -828,6 +835,11 @@ export default function registerProtonBridgeExtension(pi: ExtensionAPI) {
 			saveToMailbox: Type.Optional(
 				Type.String({ description: "Optional mailbox for appending a sent copy" }),
 			),
+			labels: Type.Optional(
+				Type.Array(Type.String(), {
+					description: "Optional labels to apply to the saved copy; requires saveToMailbox",
+				}),
+			),
 		}),
 		async execute(
 			_id: string,
@@ -840,6 +852,7 @@ export default function registerProtonBridgeExtension(pi: ExtensionAPI) {
 				body: string;
 				attachments?: string[];
 				saveToMailbox?: string;
+				labels?: string[];
 			},
 			_signal: AbortSignal,
 			_onUpdate: unknown,
@@ -859,6 +872,7 @@ export default function registerProtonBridgeExtension(pi: ExtensionAPI) {
 				body: params.body,
 				attachments: params.attachments,
 				saveToMailbox: params.saveToMailbox,
+				labels: params.labels,
 			});
 			return {
 				content: [{ type: "text", text: trimText(formatSendSummary(result), 160, 16000) }],

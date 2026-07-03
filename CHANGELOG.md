@@ -6,6 +6,7 @@
 - Added `includeWithoutAttachments` to `protonmail_list_messages` for listing non-attachment mail when requested.
 - Added `protonmail_copy_message` for copying messages between IMAP mailboxes without moving the source.
 - Improved label application errors when a requested Proton label mailbox cannot be resolved.
+- Added optional `labels` to `protonmail_send` for labeling saved sent copies.
 
 ## 0.2.0 - 2026-07-02
 

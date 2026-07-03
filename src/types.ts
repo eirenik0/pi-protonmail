@@ -119,6 +119,8 @@ export interface SendMessageResult {
 	message_id?: string;
 	saved_to_mailbox?: string;
 	saved_uid?: string;
+	labels?: string[];
+	label_mailboxes?: string[];
 }
 
 export interface MoveMessageResult {

@@ -87,6 +87,7 @@ interface CreateDraftOptions extends OutgoingMessageOptions {
 
 interface SendMessageOptions extends OutgoingMessageOptions {
 	saveToMailbox?: string;
+	labels?: string[];
 }
 
 interface MoveMessageOptions {
@@ -541,6 +542,11 @@ export async function protonBridgeSendMessage(
 	options: SendMessageOptions,
 ): Promise<SendMessageResult> {
 	requireBridgeCredentials(config);
+	const labels = [...new Set((options.labels ?? []).map((label) => label.trim()).filter(Boolean))];
+	if (labels.length > 0 && !options.saveToMailbox?.trim())
+		throw new Error(
+			"Applying labels to sent mail requires saveToMailbox so the saved UID can be labeled.",
+		);
 	const raw = await buildMimeMessage(options);
 	const security = normalizeSecurity(config.security);
 	const transport = nodemailer.createTransport({
@@ -593,6 +599,20 @@ export async function protonBridgeSendMessage(
 		} finally {
 			await client?.logout().catch(() => undefined);
 		}
+	}
+
+	if (labels.length > 0) {
+		if (!result.saved_to_mailbox || !result.saved_uid)
+			throw new Error(
+				"Proton Bridge did not return a UID for the saved sent copy; labels were not applied.",
+			);
+		const labelResult = await protonBridgeApplyLabels(config, {
+			mailbox: result.saved_to_mailbox,
+			uid: result.saved_uid,
+			labels,
+		});
+		result.labels = labelResult.labels;
+		result.label_mailboxes = labelResult.label_mailboxes;
 	}
 
 	return result;

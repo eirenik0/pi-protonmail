@@ -44,6 +44,10 @@ Draft creation should compose a MIME message with sender, recipients, body, and 
 
 Message sending should use Proton Bridge SMTP for delivery and optionally append a copy to a chosen IMAP mailbox for workflow filing.
 
+### Labels saved copies
+
+Message sending should apply requested labels only to a saved sent copy, and it should require `saveToMailbox` before accepting labels.
+
 ## Message moving
 
 Message moving should open the source mailbox by UID and move the selected message to the requested Proton destination folder.
