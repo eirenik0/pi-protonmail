@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.3.1 - 2026-07-20
+
 - Fixed Proton Bridge searches to return and fetch message UIDs correctly, and stopped applying mailbox filters as implicit message-content queries.
 
 ## 0.3.0 - 2026-07-03
