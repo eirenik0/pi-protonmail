@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Fixed Proton Bridge searches to return and fetch message UIDs correctly, and stopped applying mailbox filters as implicit message-content queries.
+
 ## 0.3.0 - 2026-07-03
 
 - Added `protonmail_get_message` for reading a single message's metadata, body, headers, and attachments by mailbox UID.

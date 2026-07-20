@@ -232,7 +232,7 @@ async function searchUids(
 	readOnly = true,
 ): Promise<string[]> {
 	await client.mailboxOpen(mailbox, { readOnly });
-	const search: Record<string, unknown> = { uid: true };
+	const search: Record<string, unknown> = {};
 	if (unseenOnly) search.seen = false;
 	else search.all = true;
 	Object.assign(search, monthSearch(period));
@@ -305,7 +305,9 @@ async function fetchParsedMessage(
 	client: ImapFlow,
 	uid: string,
 ): Promise<{ parsed: Awaited<ReturnType<typeof simpleParser>>; source: Buffer }> {
-	const message = (await client.fetchOne(uid, { uid: true, source: true })) as Record<
+	// Search results are UIDs, so the UID flag belongs in fetchOne's options.
+	// Without the third argument ImapFlow interprets the UID as a sequence number.
+	const message = (await client.fetchOne(uid, { source: true }, { uid: true })) as Record<
 		string,
 		unknown
 	>;

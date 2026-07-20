@@ -662,7 +662,8 @@ export default function registerProtonBridgeExtension(pi: ExtensionAPI) {
 			if (params.period && !period)
 				throw new Error(`Invalid period \`${params.period}\`. Expected YYYY-MM.`);
 			const resolvedPeriod = period ?? profile.policy.default_period;
-			const query = params.query?.trim() || profile.policy.mailbox_filter;
+			// mailbox_filter applies to mailbox discovery, not message contents.
+			const query = params.query?.trim() || undefined;
 			const result = await listProtonMessages(
 				ctx.cwd,
 				params.mailbox,
@@ -1071,7 +1072,8 @@ export default function registerProtonBridgeExtension(pi: ExtensionAPI) {
 			const resolvedPeriod = period ?? profile.policy.default_period;
 			if (!resolvedPeriod)
 				throw new Error("No period provided and the active profile has no default_period.");
-			const query = params.query?.trim() || profile.policy.mailbox_filter;
+			// mailbox_filter applies to mailbox discovery, not message contents.
+			const query = params.query?.trim() || undefined;
 			const config = await getProtonBridgeConfig(profile.policy.default_mailbox);
 			if (!config.username || !config.password)
 				throw new Error(protonMailSetupHint(profile.profile));
