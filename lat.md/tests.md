@@ -48,6 +48,14 @@ It should let users choose a profile, save or delete it without losing the activ
 
 Attachment imports should report the profile workspace, period folder, and staging locations so the LLM can adapt the workflow without depending on business-specific folder names or a fixed workspace layout.
 
+### Imports older matches
+
+An import with a small `limit` should still find a matching message older than the newest `limit × 10` messages of the period, and should reject workspace roots that are absolute or escape the project with `..`.
+
+### Applies the import query
+
+An import with a `query` that matches no subject, sender, message ID, or attachment name should import nothing, instead of ignoring the query and staging every attachment-bearing message.
+
 ## Pi 1.0 rendering
 
 Tool call renderers should not throw on partial streaming arguments, and the hub should list profiles whose mailbox or period matches the filter, not only names starting with it.

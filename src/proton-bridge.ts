@@ -1,6 +1,6 @@
 import { access, copyFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import { createConnection } from "node:net";
-import { basename, isAbsolute, join, relative } from "node:path";
+import { basename, isAbsolute, join, relative, resolve } from "node:path";
 
 import { ImapFlow } from "imapflow";
 import { simpleParser } from "mailparser";
@@ -738,7 +738,12 @@ export async function protonBridgeImportAttachments(
 		throw new Error(`Invalid period '${options.period}'. Expected YYYY-MM.`);
 
 	const workspaceRoot = options.workspaceRoot.trim();
-	const baseRoot = join(options.cwd, workspaceRoot);
+	const baseRoot = resolve(options.cwd, workspaceRoot);
+	const relativeRoot = relative(options.cwd, baseRoot);
+	if (isAbsolute(workspaceRoot) || relativeRoot.startsWith("..") || isAbsolute(relativeRoot))
+		throw new Error(
+			`Import workspace root "${workspaceRoot}" must be a relative path inside the project directory.`,
+		);
 	const periodRoot = join(baseRoot, options.period);
 	const mailRoot = join(periodRoot, "_mail", sanitizePathSegment(selectedMailbox));
 	const inboxRoot = join(periodRoot, "_inbox");
@@ -757,13 +762,12 @@ export async function protonBridgeImportAttachments(
 			options.unseenOnly,
 			!options.markSeen,
 		);
-		const selected = [...uids].reverse().slice(0, Math.max(options.limit ?? 100, 1) * 10);
-
-		for (const uid of selected) {
+		// Scan the whole period (like listing) so older matches are not silently skipped.
+		for (const uid of [...uids].reverse()) {
 			const { parsed, source } = await fetchParsedMessage(client, uid);
 			const summary = messageFromParsed(uid, parsed, source.length);
 			if (summary.attachment_count === 0) continue;
-			if (!matchesQuery(summary, options.query)) continue;
+			if (!matchesQuery(summary, parsed, options.query)) continue;
 
 			const messageDir = join(mailRoot, `uid-${uid}`);
 			await ensureDir(messageDir);
