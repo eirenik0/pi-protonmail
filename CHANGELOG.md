@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Adapted the extension to pi 1.0: import `Theme` from `@earendil-works/pi-coding-agent`, accept block content in the report message renderer, and keep tool call renderers safe on partial streaming arguments.
+
 ## 0.3.1 - 2026-07-20
 
 - Fixed Proton Bridge searches to return and fetch message UIDs correctly, and stopped applying mailbox filters as implicit message-content queries.

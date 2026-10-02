@@ -10,6 +10,12 @@ The command keeps config edits separate from LLM-facing workflows, and profile f
 
 Command and tool summaries are formatted by [[src/protonmail.ts#formatStatusSummary]], [[src/protonmail.ts#formatMailboxSummary]], [[src/protonmail.ts#formatMessageSummary]], [[src/protonmail.ts#formatGetMessageSummary]], and [[src/protonmail.ts#formatImportSummary]]. The hub itself lives in [[src/hub.ts#openProtonMailHub]] and stores profile defaults for later LLM workflows. Search results are fetched in UID mode, and a profile's mailbox filter is used only for mailbox discovery rather than message-content filtering.
 
+## Pi 1.0 compatibility
+
+The extension targets the pi 1.0 extension API, which runs the TUI fullscreen by default and streams partial tool arguments into renderers.
+
+`Theme` is imported from `@earendil-works/pi-coding-agent`, not `pi-tui`. The `protonmail-report` message renderer accepts both string and text-block content. Tool `renderCall` functions tolerate partial, still-streaming arguments by falling back to `…` placeholders instead of throwing.
+
 ## Proton Bridge Outgoing
 
 The extension can read, compose, send, and move mail through Proton Bridge so workflows do not stop at incoming attachment import.

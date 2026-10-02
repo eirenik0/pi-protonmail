@@ -1,8 +1,6 @@
 import { join } from "node:path";
-
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, Theme } from "@earendil-works/pi-coding-agent";
 import { getMarkdownTheme } from "@earendil-works/pi-coding-agent";
-import type { Theme } from "@earendil-works/pi-tui";
 import { Markdown, Text } from "@earendil-works/pi-tui";
 import { Data, Effect } from "effect";
 import { Type } from "typebox";
@@ -89,6 +87,11 @@ function renderToolResult(
 ) {
 	const text = result.content?.[0]?.type === "text" ? (result.content[0].text ?? "") : "";
 	return renderPreview(text || "(empty)", options.expanded, theme);
+}
+
+// renderCall can run on partial, still-streaming tool arguments.
+function listArg(value: unknown): string {
+	return Array.isArray(value) ? value.join(", ") : "…";
 }
 
 function trimText(text: string, maxLines = 120, maxChars = 12000): string {
@@ -503,11 +506,17 @@ function formatImportSummary(
 }
 
 export default function registerProtonBridgeExtension(pi: ExtensionAPI) {
-	pi.registerMessageRenderer(
-		"protonmail-report",
-		(message: { content: string }, { expanded }: { expanded: boolean }, theme: Theme) =>
-			renderPreview(message.content, expanded, theme),
-	);
+	pi.registerMessageRenderer("protonmail-report", (message, { expanded }, theme) => {
+		// Custom message content may be a string or text/image blocks in pi 1.x.
+		const text =
+			typeof message.content === "string"
+				? message.content
+				: message.content
+						.map((block) => (block.type === "text" ? block.text : ""))
+						.filter(Boolean)
+						.join("\n");
+		return renderPreview(text, expanded, theme);
+	});
 
 	pi.registerCommand("protonmail", {
 		description: "Open the Proton Mail setup hub",
@@ -567,7 +576,7 @@ export default function registerProtonBridgeExtension(pi: ExtensionAPI) {
 				details: result,
 			};
 		},
-		renderCall(_args: Record<string, never>, theme: Theme) {
+		renderCall(_args, theme: Theme) {
 			return new Text(`${theme.fg("toolTitle", theme.bold("protonmail_bridge_status"))}`, 0, 0);
 		},
 		renderResult: renderToolResult,
@@ -737,7 +746,7 @@ export default function registerProtonBridgeExtension(pi: ExtensionAPI) {
 		},
 		renderCall(args: { mailbox: string; uid: string }, theme: Theme) {
 			return new Text(
-				`${theme.fg("toolTitle", theme.bold("protonmail_get_message "))}${theme.fg("dim", `${args.mailbox} UID ${args.uid}`)}`,
+				`${theme.fg("toolTitle", theme.bold("protonmail_get_message "))}${theme.fg("dim", `${args.mailbox ?? "…"} UID ${args.uid ?? "…"}`)}`,
 				0,
 				0,
 			);
@@ -810,7 +819,7 @@ export default function registerProtonBridgeExtension(pi: ExtensionAPI) {
 		},
 		renderCall(args: { subject: string; to: string[] }, theme: Theme) {
 			return new Text(
-				`${theme.fg("toolTitle", theme.bold("protonmail_create_draft "))}${theme.fg("dim", `${args.subject} → ${args.to.join(", ")}`)}`,
+				`${theme.fg("toolTitle", theme.bold("protonmail_create_draft "))}${theme.fg("dim", `${args.subject ?? "…"} → ${listArg(args.to)}`)}`,
 				0,
 				0,
 			);
@@ -891,7 +900,7 @@ export default function registerProtonBridgeExtension(pi: ExtensionAPI) {
 		},
 		renderCall(args: { subject: string; to: string[] }, theme: Theme) {
 			return new Text(
-				`${theme.fg("toolTitle", theme.bold("protonmail_send "))}${theme.fg("dim", `${args.subject} → ${args.to.join(", ")}`)}`,
+				`${theme.fg("toolTitle", theme.bold("protonmail_send "))}${theme.fg("dim", `${args.subject ?? "…"} → ${listArg(args.to)}`)}`,
 				0,
 				0,
 			);
@@ -932,7 +941,7 @@ export default function registerProtonBridgeExtension(pi: ExtensionAPI) {
 		},
 		renderCall(args: { mailbox: string; uid: string; destination: string }, theme: Theme) {
 			return new Text(
-				`${theme.fg("toolTitle", theme.bold("protonmail_move_message "))}${theme.fg("dim", `${args.mailbox} UID ${args.uid} → ${args.destination}`)}`,
+				`${theme.fg("toolTitle", theme.bold("protonmail_move_message "))}${theme.fg("dim", `${args.mailbox ?? "…"} UID ${args.uid ?? "…"} → ${args.destination ?? "…"}`)}`,
 				0,
 				0,
 			);
@@ -973,7 +982,7 @@ export default function registerProtonBridgeExtension(pi: ExtensionAPI) {
 		},
 		renderCall(args: { mailbox: string; uid: string; destination: string }, theme: Theme) {
 			return new Text(
-				`${theme.fg("toolTitle", theme.bold("protonmail_copy_message "))}${theme.fg("dim", `${args.mailbox} UID ${args.uid} → ${args.destination}`)}`,
+				`${theme.fg("toolTitle", theme.bold("protonmail_copy_message "))}${theme.fg("dim", `${args.mailbox ?? "…"} UID ${args.uid ?? "…"} → ${args.destination ?? "…"}`)}`,
 				0,
 				0,
 			);
@@ -1014,7 +1023,7 @@ export default function registerProtonBridgeExtension(pi: ExtensionAPI) {
 		},
 		renderCall(args: { mailbox: string; uid: string; labels: string[] }, theme: Theme) {
 			return new Text(
-				`${theme.fg("toolTitle", theme.bold("protonmail_apply_labels "))}${theme.fg("dim", `${args.mailbox} UID ${args.uid} + ${args.labels.join(", ")}`)}`,
+				`${theme.fg("toolTitle", theme.bold("protonmail_apply_labels "))}${theme.fg("dim", `${args.mailbox ?? "…"} UID ${args.uid ?? "…"} + ${listArg(args.labels)}`)}`,
 				0,
 				0,
 			);

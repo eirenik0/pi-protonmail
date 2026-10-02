@@ -1,6 +1,5 @@
-import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
+import type { ExtensionCommandContext, Theme } from "@earendil-works/pi-coding-agent";
 import { getMarkdownTheme } from "@earendil-works/pi-coding-agent";
-import type { Theme } from "@earendil-works/pi-tui";
 import {
 	type Component,
 	type Focusable,
