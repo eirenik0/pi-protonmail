@@ -227,6 +227,43 @@ function monthSearch(period?: string): { since?: Date; before?: Date } {
 	return { since, before };
 }
 
+const SEARCH_FIELDS = [
+	"subject",
+	"from",
+	"to",
+	"cc",
+	"bcc",
+	"body",
+	"headers",
+	"attachments",
+	"messageid",
+	"message-id",
+];
+
+// ImapFlow surfaces a failed SELECT as a bare "Command failed"; name the mailbox instead.
+async function openMailbox(client: ImapFlow, mailbox: string, readOnly: boolean): Promise<void> {
+	try {
+		await client.mailboxOpen(mailbox, { readOnly });
+	} catch (error) {
+		throw new Error(
+			`Mailbox "${mailbox}" could not be opened (${error instanceof Error ? error.message : String(error)}). Use protonmail_list_mailboxes for exact names.`,
+		);
+	}
+}
+
+export function assertUid(uid: string): void {
+	if (!/^[1-9]\d*$/.test(uid.trim()))
+		throw new Error(`Invalid message UID "${uid}". Expected a positive number.`);
+}
+
+export function validateSearchFields(fields?: string[]): void {
+	const invalid = (fields ?? []).filter((field) => !SEARCH_FIELDS.includes(field.toLowerCase()));
+	if (invalid.length)
+		throw new Error(
+			`Unknown searchIn field(s): ${invalid.join(", ")}. Use: subject, from, to, cc, bcc, body, headers, attachments, messageId.`,
+		);
+}
+
 async function searchUids(
 	client: ImapFlow,
 	mailbox: string,
@@ -234,7 +271,7 @@ async function searchUids(
 	unseenOnly = false,
 	readOnly = true,
 ): Promise<string[]> {
-	await client.mailboxOpen(mailbox, { readOnly });
+	await openMailbox(client, mailbox, readOnly);
 	const search: Record<string, unknown> = {};
 	if (unseenOnly) search.seen = false;
 	else search.all = true;
@@ -500,6 +537,7 @@ export async function protonBridgeListMessages(
 	const selectedMailbox = mailbox || config.defaultMailbox;
 	if (!selectedMailbox)
 		throw new Error("No mailbox provided and PROTON_BRIDGE_DEFAULT_MAILBOX is not set.");
+	validateSearchFields(searchFields);
 	let client: ImapFlow | undefined;
 	try {
 		client = await connectImap(config);
@@ -527,7 +565,8 @@ export async function protonBridgeGetMessage(
 	let client: ImapFlow | undefined;
 	try {
 		client = await connectImap(config);
-		await client.mailboxOpen(options.mailbox, { readOnly: true });
+		assertUid(options.uid);
+		await openMailbox(client, options.mailbox, true);
 		const { parsed, source } = await fetchParsedMessage(client, options.uid);
 		const summary = messageFromParsed(options.uid, parsed, source.length);
 		return {
@@ -663,7 +702,7 @@ export async function protonBridgeMoveMessage(
 	let client: ImapFlow | undefined;
 	try {
 		client = await connectImap(config);
-		await client.mailboxOpen(options.mailbox, { readOnly: false });
+		await openMailbox(client, options.mailbox, false);
 		await client.messageMove(options.uid, options.destination, { uid: true });
 		return {
 			uid: options.uid,
@@ -683,7 +722,7 @@ export async function protonBridgeCopyMessage(
 	let client: ImapFlow | undefined;
 	try {
 		client = await connectImap(config);
-		await client.mailboxOpen(options.mailbox, { readOnly: false });
+		await openMailbox(client, options.mailbox, false);
 		const result = await client.messageCopy(options.uid, options.destination, { uid: true });
 		return {
 			uid: options.uid,
@@ -707,7 +746,7 @@ export async function protonBridgeApplyLabels(
 	try {
 		client = await connectImap(config);
 		const mailboxes = await listMailboxes(client);
-		await client.mailboxOpen(options.mailbox, { readOnly: false });
+		await openMailbox(client, options.mailbox, false);
 		const labelMailboxes = [
 			...new Set(labels.map((label) => resolveLabelMailbox(label, mailboxes))),
 		];
@@ -734,7 +773,7 @@ export async function protonBridgeImportAttachments(
 	const selectedMailbox = options.mailbox || config.defaultMailbox;
 	if (!selectedMailbox)
 		throw new Error("No mailbox provided and PROTON_BRIDGE_DEFAULT_MAILBOX is not set.");
-	if (!/^\d{4}-\d{2}$/.test(options.period))
+	if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(options.period))
 		throw new Error(`Invalid period '${options.period}'. Expected YYYY-MM.`);
 
 	const workspaceRoot = options.workspaceRoot.trim();

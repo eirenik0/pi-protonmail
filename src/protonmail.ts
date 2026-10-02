@@ -8,6 +8,7 @@ import { Type } from "typebox";
 import { PREVIEW_LINES } from "./constants.ts";
 import { openProtonMailHub } from "./hub.ts";
 import {
+	assertUid,
 	protonBridgeApplyLabels as runProtonBridgeApplyLabels,
 	protonBridgeCopyMessage as runProtonBridgeCopyMessage,
 	protonBridgeCreateDraft as runProtonBridgeCreateDraft,
@@ -18,6 +19,7 @@ import {
 	protonBridgeMoveMessage as runProtonBridgeMoveMessage,
 	protonBridgeSendMessage as runProtonBridgeSendMessage,
 	protonBridgeStatus as runProtonBridgeStatus,
+	validateSearchFields,
 } from "./proton-bridge.ts";
 import { resolveSecretReference } from "./secret-refs.ts";
 import type {
@@ -104,7 +106,7 @@ function trimText(text: string, maxLines = 120, maxChars = 12000): string {
 
 function parseMonthPeriod(value?: string): string | undefined {
 	if (!value) return undefined;
-	return /^\d{4}-\d{2}$/.test(value) ? value : undefined;
+	return /^\d{4}-(0[1-9]|1[0-2])$/.test(value) ? value : undefined;
 }
 
 async function getProtonBridgeConfig(defaultMailbox?: string): Promise<ProtonBridgeConfig> {
@@ -228,6 +230,8 @@ async function listProtonMessages(
 	attachmentsOnly = false,
 	searchFields?: string[],
 ): Promise<MessageListResult> {
+	// Validate arguments before resolving secrets, which may block on 1Password.
+	validateSearchFields(searchFields);
 	const config = await getProtonBridgeConfig(defaultMailbox);
 	if (!config.username || !config.password) throw new Error(protonMailSetupHint(defaultMailbox));
 	return runProtonBridgeListMessages(
@@ -250,6 +254,7 @@ async function getProtonMessage(
 	includeHeaders = true,
 	defaultMailbox?: string,
 ): Promise<GetMessageResult> {
+	assertUid(uid);
 	const config = await getProtonBridgeConfig(defaultMailbox);
 	if (!config.username || !config.password) throw new Error(protonMailSetupHint(defaultMailbox));
 	return runProtonBridgeGetMessage(config, { mailbox, uid, includeBody, includeHeaders });
@@ -798,12 +803,13 @@ export default function registerProtonBridgeExtension(pi: ExtensionAPI) {
 			ctx: ToolContext,
 		) {
 			const profile = await resolveProtonMailActiveProfile(ctx.cwd);
+			const from = resolveOutgoingFrom(params.from, profile);
 			const config = await getProtonBridgeConfig(profile.policy.default_mailbox);
 			if (!config.username || !config.password)
 				throw new Error(protonMailSetupHint(profile.profile));
 			const result = await runProtonBridgeCreateDraft(config, {
 				cwd: ctx.cwd,
-				from: resolveOutgoingFrom(params.from, profile),
+				from,
 				to: params.to,
 				cc: params.cc,
 				bcc: params.bcc,
@@ -878,12 +884,17 @@ export default function registerProtonBridgeExtension(pi: ExtensionAPI) {
 			ctx: ToolContext,
 		) {
 			const profile = await resolveProtonMailActiveProfile(ctx.cwd);
+			const from = resolveOutgoingFrom(params.from, profile);
+			if (params.labels?.some((label) => label.trim()) && !params.saveToMailbox?.trim())
+				throw new Error(
+					"Applying labels to sent mail requires saveToMailbox so the saved UID can be labeled.",
+				);
 			const config = await getProtonBridgeConfig(profile.policy.default_mailbox);
 			if (!config.username || !config.password)
 				throw new Error(protonMailSetupHint(profile.profile));
 			const result = await runProtonBridgeSendMessage(config, {
 				cwd: ctx.cwd,
-				from: resolveOutgoingFrom(params.from, profile),
+				from,
 				to: params.to,
 				cc: params.cc,
 				bcc: params.bcc,
@@ -930,6 +941,7 @@ export default function registerProtonBridgeExtension(pi: ExtensionAPI) {
 			ctx: ToolContext,
 		) {
 			const profile = await resolveProtonMailActiveProfile(ctx.cwd);
+			assertUid(params.uid);
 			const config = await getProtonBridgeConfig(profile.policy.default_mailbox);
 			if (!config.username || !config.password)
 				throw new Error(protonMailSetupHint(profile.profile));
@@ -971,6 +983,7 @@ export default function registerProtonBridgeExtension(pi: ExtensionAPI) {
 			ctx: ToolContext,
 		) {
 			const profile = await resolveProtonMailActiveProfile(ctx.cwd);
+			assertUid(params.uid);
 			const config = await getProtonBridgeConfig(profile.policy.default_mailbox);
 			if (!config.username || !config.password)
 				throw new Error(protonMailSetupHint(profile.profile));
@@ -1012,6 +1025,7 @@ export default function registerProtonBridgeExtension(pi: ExtensionAPI) {
 			ctx: ToolContext,
 		) {
 			const profile = await resolveProtonMailActiveProfile(ctx.cwd);
+			assertUid(params.uid);
 			const config = await getProtonBridgeConfig(profile.policy.default_mailbox);
 			if (!config.username || !config.password)
 				throw new Error(protonMailSetupHint(profile.profile));
