@@ -4,6 +4,7 @@
 
 - Adapted the extension to pi 1.0: import `Theme` from `@earendil-works/pi-coding-agent`, accept block content in the report message renderer, and keep tool call renderers safe on partial streaming arguments.
 - Disabled ImapFlow's stdout logger, which corrupted pi's fullscreen TUI and printed AUTH payloads.
+- Rebuilt the setup hub profile list without touching private `SelectList` fields, so filters match mailbox and period values again, and moved the cursor to the end of prefilled inputs.
 
 ## 0.3.1 - 2026-07-20
 

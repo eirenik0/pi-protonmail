@@ -50,7 +50,7 @@ Attachment imports should report the profile workspace, period folder, and stagi
 
 ## Pi 1.0 rendering
 
-Tool call renderers should not throw on partial streaming arguments.
+Tool call renderers should not throw on partial streaming arguments, and the hub should list profiles whose mailbox or period matches the filter, not only names starting with it.
 
 ### Quiet IMAP client
 

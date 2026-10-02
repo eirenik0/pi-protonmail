@@ -14,7 +14,7 @@ Command and tool summaries are formatted by [[src/protonmail.ts#formatStatusSumm
 
 The extension targets the pi 1.0 extension API, which runs the TUI fullscreen by default and streams partial tool arguments into renderers.
 
-`Theme` is imported from `@earendil-works/pi-coding-agent`, not `pi-tui`. The `protonmail-report` message renderer accepts both string and text-block content. Tool `renderCall` functions tolerate partial, still-streaming arguments by falling back to `…` placeholders instead of throwing. ImapFlow logging is disabled so debug output never writes to stdout under the fullscreen TUI.
+`Theme` is imported from `@earendil-works/pi-coding-agent`, not `pi-tui`. The `protonmail-report` message renderer accepts both string and text-block content. Tool `renderCall` functions tolerate partial, still-streaming arguments by falling back to `…` placeholders instead of throwing. The hub rebuilds its `SelectList` on each filter change rather than mutating private fields, and moves the input cursor to the end after prefilling values. ImapFlow logging is disabled so debug output never writes to stdout under the fullscreen TUI.
 
 ## Proton Bridge Outgoing
 

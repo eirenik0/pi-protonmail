@@ -6,6 +6,7 @@ import {
 	Input,
 	Markdown,
 	matchesKey,
+	type SelectItem,
 	SelectList,
 	Text,
 	truncateToWidth,
@@ -65,26 +66,19 @@ function profileLabel(profile: ProtonMailWorkingProfile): string {
 	return profile.profile;
 }
 
-function makeSelectItem(value: string, label: string, description?: string) {
+function makeSelectItem(value: string, label: string, description?: string): SelectItem {
 	return { value, label, description };
-}
-
-function replaceSelectItems<T extends { value: string; label: string; description?: string }>(
-	list: SelectList,
-	items: T[],
-) {
-	const mutable = list as SelectList & {
-		items: T[];
-		filteredItems: T[];
-		selectedIndex: number;
-	};
-	mutable.items = items;
-	mutable.filteredItems = items;
-	mutable.selectedIndex = items.length > 0 ? 0 : 0;
 }
 
 function selectedItemValue(list: SelectList): string | undefined {
 	return list.getSelectedItem()?.value;
+}
+
+// pi-tui's Input.setValue keeps the old cursor (often 0); send the default
+// End key so typing appends to prefilled values.
+function setInputValue(input: Input, value: string): void {
+	input.setValue(value);
+	input.handleInput("\x1b[F");
 }
 
 function normalized(text: string): string {
@@ -97,7 +91,7 @@ class ProtonMailHubComponent implements Component, Focusable {
 	private readonly defaultMailboxInput = new Input();
 	private readonly mailboxFilterInput = new Input();
 	private readonly periodInput = new Input();
-	private readonly profilesList: SelectList;
+	private profilesList: SelectList;
 	private readonly titleText: Markdown;
 	private readonly helpText: Markdown;
 	private readonly footerText: Text;
@@ -130,7 +124,7 @@ class ProtonMailHubComponent implements Component, Focusable {
 		this.theme = theme;
 		this.profiles = profiles.length > 0 ? [...profiles] : [this.createSyntheticDefaultProfile()];
 		this.activeProfile = this.resolveInitialProfile(initialProfile);
-		this.profilesList = new SelectList([], 6, selectTheme(theme));
+		this.profilesList = this.createProfilesList([]);
 		this.titleText = new Markdown(
 			[
 				"# Proton Mail Settings Hub",
@@ -160,7 +154,7 @@ class ProtonMailHubComponent implements Component, Focusable {
 			0,
 		);
 
-		this.profileFilterInput.setValue(initialProfile ?? this.activeProfile);
+		setInputValue(this.profileFilterInput, initialProfile ?? this.activeProfile);
 		this.loadProfileIntoInputs(this.currentProfile());
 
 		this.profileFilterInput.onSubmit = () => {
@@ -178,7 +172,7 @@ class ProtonMailHubComponent implements Component, Focusable {
 		};
 		this.profileFilterInput.onEscape = () => {
 			if (this.profileFilterInput.getValue()) {
-				this.profileFilterInput.setValue("");
+				setInputValue(this.profileFilterInput, "");
 				this.applyProfileFilter();
 				return;
 			}
@@ -192,7 +186,7 @@ class ProtonMailHubComponent implements Component, Focusable {
 		};
 		this.defaultMailboxInput.onEscape = () => {
 			if (this.defaultMailboxInput.getValue() !== this.currentPolicy().default_mailbox) {
-				this.defaultMailboxInput.setValue(this.currentPolicy().default_mailbox ?? "");
+				setInputValue(this.defaultMailboxInput, this.currentPolicy().default_mailbox ?? "");
 				return;
 			}
 			this.focusMode = "profiles";
@@ -207,7 +201,7 @@ class ProtonMailHubComponent implements Component, Focusable {
 		};
 		this.mailboxFilterInput.onEscape = () => {
 			if (this.mailboxFilterInput.getValue() !== this.currentPolicy().mailbox_filter) {
-				this.mailboxFilterInput.setValue(this.currentPolicy().mailbox_filter ?? "");
+				setInputValue(this.mailboxFilterInput, this.currentPolicy().mailbox_filter ?? "");
 				return;
 			}
 			this.focusMode = "default-mailbox";
@@ -220,7 +214,7 @@ class ProtonMailHubComponent implements Component, Focusable {
 		};
 		this.periodInput.onEscape = () => {
 			if (this.periodInput.getValue() !== this.currentPolicy().default_period) {
-				this.periodInput.setValue(this.currentPolicy().default_period ?? currentMonth());
+				setInputValue(this.periodInput, this.currentPolicy().default_period ?? currentMonth());
 				return;
 			}
 			this.focusMode = "mailbox-filter";
@@ -228,23 +222,29 @@ class ProtonMailHubComponent implements Component, Focusable {
 			this.refresh();
 		};
 
-		this.profilesList.onSelectionChange = (item) => {
+		this.applyProfileFilter();
+		this.updateFocusState();
+	}
+
+	// SelectList keeps its items private, so a filter change rebuilds the list
+	// instead of mutating internals that may change between pi-tui releases.
+	private createProfilesList(items: SelectItem[]): SelectList {
+		const list = new SelectList(items, 6, selectTheme(this.theme));
+		list.onSelectionChange = (item) => {
 			this.selectProfile(item.value);
 		};
-		this.profilesList.onSelect = (item) => {
+		list.onSelect = (item) => {
 			this.selectProfile(item.value);
 			this.focusMode = "default-mailbox";
 			this.updateFocusState();
 			this.refresh();
 		};
-		this.profilesList.onCancel = () => {
+		list.onCancel = () => {
 			this.focusMode = "profile-filter";
 			this.updateFocusState();
 			this.refresh();
 		};
-
-		this.applyProfileFilter();
-		this.updateFocusState();
+		return list;
 	}
 
 	private createSyntheticDefaultProfile(): ProtonMailWorkingProfile {
@@ -277,9 +277,9 @@ class ProtonMailHubComponent implements Component, Focusable {
 
 	private loadProfileIntoInputs(profile?: ProtonMailWorkingProfile): void {
 		const current = profile ?? this.currentProfile();
-		this.defaultMailboxInput.setValue(current.policy.default_mailbox ?? "");
-		this.mailboxFilterInput.setValue(current.policy.mailbox_filter ?? "");
-		this.periodInput.setValue(current.policy.default_period ?? currentMonth());
+		setInputValue(this.defaultMailboxInput, current.policy.default_mailbox ?? "");
+		setInputValue(this.mailboxFilterInput, current.policy.mailbox_filter ?? "");
+		setInputValue(this.periodInput, current.policy.default_period ?? currentMonth());
 	}
 
 	private profileMatchesQuery(profile: ProtonMailWorkingProfile, query: string): boolean {
@@ -300,15 +300,14 @@ class ProtonMailHubComponent implements Component, Focusable {
 	}
 
 	private applyProfileFilter(): void {
-		const filter = this.profileFilterInput.getValue().trim().toLowerCase();
 		const visible = this.filteredProfiles();
-		replaceSelectItems(
-			this.profilesList,
+		this.profilesList = this.createProfilesList(
 			visible.map((profile) =>
 				makeSelectItem(profile.profile, profileLabel(profile), policySummary(profile.policy)),
 			),
 		);
-		this.profilesList.setFilter(filter);
+		const activeIndex = visible.findIndex((profile) => profile.profile === this.activeProfile);
+		if (activeIndex > 0) this.profilesList.setSelectedIndex(activeIndex);
 		this.activeProfile = selectedItemValue(this.profilesList) ?? this.activeProfile;
 		this.refresh();
 	}
@@ -411,7 +410,7 @@ class ProtonMailHubComponent implements Component, Focusable {
 		if (matchesKey(data, "escape")) {
 			if (this.focusMode === "profile-filter") {
 				if (this.profileFilterInput.getValue()) {
-					this.profileFilterInput.setValue("");
+					setInputValue(this.profileFilterInput, "");
 					this.applyProfileFilter();
 					return;
 				}
@@ -422,7 +421,7 @@ class ProtonMailHubComponent implements Component, Focusable {
 				if (
 					this.periodInput.getValue() !== (this.currentPolicy().default_period ?? currentMonth())
 				) {
-					this.periodInput.setValue(this.currentPolicy().default_period ?? currentMonth());
+					setInputValue(this.periodInput, this.currentPolicy().default_period ?? currentMonth());
 					return;
 				}
 				this.focusMode = "mailbox-filter";
@@ -432,7 +431,7 @@ class ProtonMailHubComponent implements Component, Focusable {
 			}
 			if (this.focusMode === "mailbox-filter") {
 				if (this.mailboxFilterInput.getValue() !== (this.currentPolicy().mailbox_filter ?? "")) {
-					this.mailboxFilterInput.setValue(this.currentPolicy().mailbox_filter ?? "");
+					setInputValue(this.mailboxFilterInput, this.currentPolicy().mailbox_filter ?? "");
 					return;
 				}
 				this.focusMode = "default-mailbox";
@@ -442,7 +441,7 @@ class ProtonMailHubComponent implements Component, Focusable {
 			}
 			if (this.focusMode === "default-mailbox") {
 				if (this.defaultMailboxInput.getValue() !== (this.currentPolicy().default_mailbox ?? "")) {
-					this.defaultMailboxInput.setValue(this.currentPolicy().default_mailbox ?? "");
+					setInputValue(this.defaultMailboxInput, this.currentPolicy().default_mailbox ?? "");
 					return;
 				}
 				this.focusMode = "profiles";
