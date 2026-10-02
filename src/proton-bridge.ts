@@ -3,7 +3,7 @@ import { createConnection } from "node:net";
 import { basename, isAbsolute, join, relative, resolve } from "node:path";
 
 import { ImapFlow } from "imapflow";
-import { simpleParser } from "mailparser";
+import { type AddressObject, simpleParser } from "mailparser";
 import nodemailer from "nodemailer";
 import MailComposer from "nodemailer/lib/mail-composer/index.js";
 import type Mail from "nodemailer/lib/mailer/index.js";
@@ -203,7 +203,8 @@ async function connectImap(config: ProtonBridgeConfig): Promise<ImapFlow> {
 async function listMailboxes(client: ImapFlow): Promise<MailboxInfo[]> {
 	const mailboxes: MailboxInfo[] = [];
 	const listing = await client.list();
-	for await (const row of listing as AsyncIterable<Record<string, unknown>>) {
+	for (const entry of listing) {
+		const row = entry as unknown as Record<string, unknown>;
 		const name = toStringValue(row.path ?? row.name ?? row.mailbox ?? row.id ?? row.raw).trim();
 		const raw = toStringValue(row.raw).trim() || undefined;
 		const flags = Array.isArray(row.flags)
@@ -327,6 +328,16 @@ function messageFromParsed(
 	};
 }
 
+function addressText(value: AddressObject | AddressObject[] | undefined): string | undefined {
+	if (!value) return undefined;
+	const list = Array.isArray(value) ? value : [value];
+	const text = list
+		.map((entry) => entry.text?.trim())
+		.filter(Boolean)
+		.join(", ");
+	return text || undefined;
+}
+
 function matchesQuery(
 	summary: MessageInfo,
 	parsed: Awaited<ReturnType<typeof simpleParser>>,
@@ -343,9 +354,9 @@ function matchesQuery(
 	const values: Array<string | undefined> = [];
 	if (fields.has("subject")) values.push(summary.subject);
 	if (fields.has("from")) values.push(summary.from);
-	if (fields.has("to")) values.push(parsed.to?.text);
-	if (fields.has("cc")) values.push(parsed.cc?.text);
-	if (fields.has("bcc")) values.push(parsed.bcc?.text);
+	if (fields.has("to")) values.push(addressText(parsed.to));
+	if (fields.has("cc")) values.push(addressText(parsed.cc));
+	if (fields.has("bcc")) values.push(addressText(parsed.bcc));
 	if (fields.has("messageid") || fields.has("message-id")) values.push(summary.message_id);
 	if (fields.has("attachments")) {
 		values.push(...summary.attachments.map((attachment) => attachment.filename));
@@ -368,10 +379,9 @@ async function fetchParsedMessage(
 ): Promise<{ parsed: Awaited<ReturnType<typeof simpleParser>>; source: Buffer }> {
 	// Search results are UIDs, so the UID flag belongs in fetchOne's options.
 	// Without the third argument ImapFlow interprets the UID as a sequence number.
-	const message = (await client.fetchOne(uid, { source: true }, { uid: true })) as Record<
-		string,
-		unknown
-	>;
+	const fetched = await client.fetchOne(uid, { source: true }, { uid: true });
+	if (!fetched) throw new Error(`Message UID ${uid} was not found`);
+	const message = fetched as unknown as Record<string, unknown>;
 	const source =
 		message.source instanceof Buffer
 			? message.source
@@ -593,9 +603,9 @@ export async function protonBridgeGetMessage(
 		return {
 			...summary,
 			mailbox: options.mailbox,
-			to: parsed.to?.text?.trim() || undefined,
-			cc: parsed.cc?.text?.trim() || undefined,
-			bcc: parsed.bcc?.text?.trim() || undefined,
+			to: addressText(parsed.to),
+			cc: addressText(parsed.cc),
+			bcc: addressText(parsed.bcc),
 			text_body: options.includeBody === false ? undefined : parsed.text?.trim() || undefined,
 			html_body:
 				options.includeBody === false || typeof parsed.html !== "string"

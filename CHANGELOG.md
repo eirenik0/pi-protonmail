@@ -8,6 +8,7 @@
 - Fixed `protonmail_import_attachments` ignoring its `query` filter and skipping matches older than the newest `limit × 10` messages; workspace roots outside the project are now rejected.
 - Move, copy, and label tools now fail when the destination mailbox or source UID does not exist instead of reporting success.
 - Validated periods (month 01–12), UIDs, and `searchIn` fields, named unopenable mailboxes in errors, and ran these checks before 1Password secret resolution.
+- Added `npm run typecheck` against pi 1.0 types and ran it in CI on Node 24.
 
 ## 0.3.1 - 2026-07-20
 

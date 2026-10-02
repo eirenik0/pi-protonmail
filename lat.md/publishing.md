@@ -8,4 +8,4 @@ Tagged pushes matching `v*` trigger the npm publish workflow, which validates th
 
 ## Quality workflow
 
-Main-branch pushes and pull requests run formatting and lint checks in GitHub Actions so release metadata and source style stay healthy before a publish tag is created.
+Main-branch pushes and pull requests run formatting, lint, and `npm run typecheck` checks on Node 24 in GitHub Actions so release metadata and source style stay healthy before a publish tag is created.
