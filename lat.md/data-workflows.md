@@ -16,6 +16,12 @@ Cheap argument checks run before Bridge secrets are resolved, because `op read` 
 
 Periods must be `YYYY-MM` with a month of 01–12, UIDs must be positive integers, `searchIn` accepts only known fields, outgoing mail needs a `from` (explicit or profile `default_from`), and labels on sent mail require `saveToMailbox`. Mailboxes that cannot be opened are named in the error instead of ImapFlow's bare "Command failed".
 
+## Write-result checks
+
+ImapFlow's `messageMove` and `messageCopy` return `false` instead of throwing, so move, copy, and label operations verify the source UID exists and fail on a `false` result.
+
+Without these checks a missing destination folder or UID was reported to the LLM as a successful move.
+
 IMAP connections are created with ImapFlow's logger disabled, so protocol traces and AUTH payloads never reach stdout or the pi TUI.
 
 Secret values may be literal text or 1Password references handled by [[src/secret-refs.ts#resolveSecretReference]].

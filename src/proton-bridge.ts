@@ -256,6 +256,27 @@ export function assertUid(uid: string): void {
 		throw new Error(`Invalid message UID "${uid}". Expected a positive number.`);
 }
 
+// messageMove/messageCopy return false instead of throwing, so a missing UID or
+// destination would otherwise be reported as success.
+async function assertUidExists(client: ImapFlow, mailbox: string, uid: string): Promise<void> {
+	assertUid(uid);
+	const found = await client.search({ uid }, { uid: true });
+	if (!Array.isArray(found) || !found.includes(Number(uid)))
+		throw new Error(`Message UID ${uid} was not found in "${mailbox}".`);
+}
+
+function assertWriteResult(
+	result: unknown,
+	action: string,
+	uid: string,
+	destination: string,
+): void {
+	if (result === false)
+		throw new Error(
+			`Could not ${action} UID ${uid} to "${destination}". Check that the destination mailbox exists with protonmail_list_mailboxes.`,
+		);
+}
+
 export function validateSearchFields(fields?: string[]): void {
 	const invalid = (fields ?? []).filter((field) => !SEARCH_FIELDS.includes(field.toLowerCase()));
 	if (invalid.length)
@@ -703,7 +724,9 @@ export async function protonBridgeMoveMessage(
 	try {
 		client = await connectImap(config);
 		await openMailbox(client, options.mailbox, false);
-		await client.messageMove(options.uid, options.destination, { uid: true });
+		await assertUidExists(client, options.mailbox, options.uid);
+		const result = await client.messageMove(options.uid, options.destination, { uid: true });
+		assertWriteResult(result, "move", options.uid, options.destination);
 		return {
 			uid: options.uid,
 			source: options.mailbox,
@@ -723,7 +746,9 @@ export async function protonBridgeCopyMessage(
 	try {
 		client = await connectImap(config);
 		await openMailbox(client, options.mailbox, false);
+		await assertUidExists(client, options.mailbox, options.uid);
 		const result = await client.messageCopy(options.uid, options.destination, { uid: true });
+		assertWriteResult(result, "copy", options.uid, options.destination);
 		return {
 			uid: options.uid,
 			source: options.mailbox,
@@ -747,11 +772,13 @@ export async function protonBridgeApplyLabels(
 		client = await connectImap(config);
 		const mailboxes = await listMailboxes(client);
 		await openMailbox(client, options.mailbox, false);
+		await assertUidExists(client, options.mailbox, options.uid);
 		const labelMailboxes = [
 			...new Set(labels.map((label) => resolveLabelMailbox(label, mailboxes))),
 		];
 		for (const labelMailbox of labelMailboxes) {
-			await client.messageCopy(options.uid, labelMailbox, { uid: true });
+			const result = await client.messageCopy(options.uid, labelMailbox, { uid: true });
+			assertWriteResult(result, "label", options.uid, labelMailbox);
 		}
 		return {
 			uid: options.uid,

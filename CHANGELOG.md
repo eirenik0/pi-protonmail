@@ -6,6 +6,7 @@
 - Disabled ImapFlow's stdout logger, which corrupted pi's fullscreen TUI and printed AUTH payloads.
 - Rebuilt the setup hub profile list without touching private `SelectList` fields, so filters match mailbox and period values again, and moved the cursor to the end of prefilled inputs.
 - Fixed `protonmail_import_attachments` ignoring its `query` filter and skipping matches older than the newest `limit × 10` messages; workspace roots outside the project are now rejected.
+- Move, copy, and label tools now fail when the destination mailbox or source UID does not exist instead of reporting success.
 - Validated periods (month 01–12), UIDs, and `searchIn` fields, named unopenable mailboxes in errors, and ran these checks before 1Password secret resolution.
 
 ## 0.3.1 - 2026-07-20

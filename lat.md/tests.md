@@ -80,6 +80,10 @@ Message sending should apply requested labels only to a saved sent copy, and it 
 
 Message moving should open the source mailbox by UID and move the selected message to the requested Proton destination folder.
 
+### Reports failed moves
+
+Moving or copying to a nonexistent destination, or a UID missing from the source mailbox, should fail with a clear error instead of reporting success.
+
 ## Message copying
 
 Message copying should open the source mailbox by UID and copy the selected message to the requested Proton destination without removing the source message.
