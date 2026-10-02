@@ -192,6 +192,9 @@ async function connectImap(config: ProtonBridgeConfig): Promise<ImapFlow> {
 		tls: {
 			rejectUnauthorized: false,
 		},
+		// ImapFlow's default pino logger writes debug lines (including AUTH
+		// payloads) straight to stdout, which corrupts pi's fullscreen TUI.
+		logger: false,
 	});
 	await client.connect();
 	return client;

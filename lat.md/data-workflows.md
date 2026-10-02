@@ -8,4 +8,6 @@ This extension reads the Bridge env vars, resolves secret references, and then u
 
 Profile defaults live under `.pi/protonmail/config.json` and `.pi/protonmail/profiles/<name>/policy.json`; those files capture the active setup used later by LLM-oriented workflows. Attachment imports are staged under `.pi/protonmail/imports/<profile>/...` by default, and `import_workspace_root` can override that path for adapted workflows.
 
+IMAP connections are created with ImapFlow's logger disabled, so protocol traces and AUTH payloads never reach stdout or the pi TUI.
+
 Secret values may be literal text or 1Password references handled by [[src/secret-refs.ts#resolveSecretReference]].

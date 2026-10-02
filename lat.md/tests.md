@@ -52,6 +52,10 @@ Attachment imports should report the profile workspace, period folder, and stagi
 
 Tool call renderers should not throw on partial streaming arguments.
 
+### Quiet IMAP client
+
+Running any Bridge tool should print nothing to stdout from ImapFlow, since stray protocol logs corrupt pi's fullscreen TUI and can expose AUTH payloads.
+
 ## Draft creation
 
 Draft creation should compose a MIME message with sender, recipients, body, and local attachments before APPENDing it to the configured Drafts mailbox.
