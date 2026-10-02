@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Switched npm publishing to trusted publishing (GitHub OIDC); the workflow no longer uses an `NPM_TOKEN` secret.
+
 ## 0.4.0 - 2026-10-02
 
 - Adapted the extension to pi 1.0: import `Theme` from `@earendil-works/pi-coding-agent`, accept block content in the report message renderer, and keep tool call renderers safe on partial streaming arguments.

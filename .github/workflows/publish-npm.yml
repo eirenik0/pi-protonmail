@@ -11,6 +11,9 @@ on:
         required: false
         type: string
 
+# npm trusted publishing: the job authenticates with a short-lived GitHub OIDC
+# token (id-token: write), so no NPM_TOKEN secret is needed. The package's
+# trusted publisher on npmjs.com must name this repo and `publish-npm.yml`.
 permissions:
   contents: read
   id-token: write
@@ -55,6 +58,10 @@ jobs:
           cache: npm
           registry-url: https://registry.npmjs.org
 
+      # Trusted publishing needs npm >= 11.5.1.
+      - name: Update npm
+        run: npm install -g npm@^11.5.1
+
       - name: Install dependencies
         run: npm ci
 
@@ -85,14 +92,7 @@ jobs:
           npm run check
           npm pack --dry-run
 
+      # OIDC trusted publishing; npm attaches provenance automatically.
       - name: Publish to npm
         if: ${{ steps.meta.outputs.already_published != 'true' }}
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: |
-          if [ -z "${NODE_AUTH_TOKEN:-}" ]; then
-            echo "::error::NPM_TOKEN secret is required to publish to npm."
-            exit 1
-          fi
-
-          npm publish --access public --provenance
+        run: npm publish --access public
