@@ -113,14 +113,18 @@ class ProtonMailHubComponent implements Component, Focusable {
 	private profiles: ProtonMailWorkingProfile[];
 	private activeProfile: string;
 	private errorMessage = "";
+	private readonly tui: { requestRender(): void };
+	private readonly done: (value: ProtonMailHubResult | null) => void;
 
 	constructor(
-		private readonly tui: { requestRender(): void },
+		tui: { requestRender(): void },
 		theme: Theme,
-		private readonly done: (value: ProtonMailHubResult | null) => void,
+		done: (value: ProtonMailHubResult | null) => void,
 		profiles: ProtonMailWorkingProfile[],
 		initialProfile?: string,
 	) {
+		this.tui = tui;
+		this.done = done;
 		this.theme = theme;
 		this.profiles = profiles.length > 0 ? [...profiles] : [this.createSyntheticDefaultProfile()];
 		this.activeProfile = this.resolveInitialProfile(initialProfile);

@@ -1,9 +1,8 @@
 import { execFile as execFileCallback } from "node:child_process";
-import { promisify } from "node:util";
 
 import { Data, Effect } from "effect";
 
-const execFile = promisify(execFileCallback);
+import { BRIDGE_CANCELLED_MESSAGE } from "./constants.ts";
 
 function trimMatchingQuotes(value: string): string {
 	if (
@@ -54,13 +53,35 @@ function toSecretReferenceError(
 	});
 }
 
-function resolveSecretReferenceEffect(rawValue: string, label = "secret") {
+function isAbortError(error: unknown): boolean {
+	if (!error || typeof error !== "object") return false;
+	const name = "name" in error ? error.name : undefined;
+	const code = "code" in error ? error.code : undefined;
+	return name === "AbortError" || code === "ABORT_ERR";
+}
+
+function execOpRead(reference: string, signal?: AbortSignal): Promise<{ stdout: string }> {
+	return new Promise((resolve, reject) => {
+		execFileCallback("op", ["read", reference], { signal }, (error, stdout) => {
+			if (error) reject(error);
+			else resolve({ stdout });
+		});
+	});
+}
+
+function resolveSecretReferenceEffect(rawValue: string, label = "secret", signal?: AbortSignal) {
 	const reference = extractOnePasswordReference(rawValue);
 	if (!reference) return Effect.succeed(rawValue);
+	if (signal?.aborted) {
+		return Effect.fail(new SecretReferenceError({ message: BRIDGE_CANCELLED_MESSAGE }));
+	}
 
 	return Effect.tryPromise({
-		try: () => execFile("op", ["read", reference]),
-		catch: (error) => toSecretReferenceError(label, reference, error),
+		try: () => execOpRead(reference, signal),
+		catch: (error) =>
+			isAbortError(error) || signal?.aborted
+				? new SecretReferenceError({ message: BRIDGE_CANCELLED_MESSAGE })
+				: toSecretReferenceError(label, reference, error),
 	}).pipe(
 		Effect.flatMap(({ stdout }) => {
 			const secret = stdout.trim();
@@ -76,6 +97,10 @@ function resolveSecretReferenceEffect(rawValue: string, label = "secret") {
 	);
 }
 
-export async function resolveSecretReference(rawValue: string, label = "secret"): Promise<string> {
-	return Effect.runPromise(resolveSecretReferenceEffect(rawValue, label));
+export async function resolveSecretReference(
+	rawValue: string,
+	label = "secret",
+	signal?: AbortSignal,
+): Promise<string> {
+	return Effect.runPromise(resolveSecretReferenceEffect(rawValue, label, signal));
 }
