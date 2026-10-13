@@ -127,7 +127,11 @@ function startImap(mode: ImapMode): Promise<{
 	}));
 }
 
-function startSilentSmtp(): Promise<{ port: number; stop: () => Promise<void> }> {
+function startSilentSmtp(): Promise<{
+	port: number;
+	socketsClosed: () => boolean;
+	stop: () => Promise<void>;
+}> {
 	const sockets = new Set<Socket>();
 	const server = createServer((socket) => {
 		sockets.add(socket);
@@ -135,8 +139,33 @@ function startSilentSmtp(): Promise<{ port: number; stop: () => Promise<void> }>
 	});
 	return listen(server).then((port) => ({
 		port,
+		socketsClosed: () => sockets.size === 0,
 		stop: () => closeServer(server, sockets),
 	}));
+}
+
+function watch(pending: Promise<unknown>): Promise<unknown> {
+	return pending.then(
+		() => undefined,
+		(error: unknown) => error,
+	);
+}
+
+async function waitForServer(event: Promise<void>, pending: Promise<unknown>, label: string) {
+	const settled = watch(pending);
+	const winner = await Promise.race([
+		event.then(() => "event" as const),
+		delay(3_000).then(() => "timeout" as const),
+		settled.then((error): "failed" | "settled" => (error ? "failed" : "settled")),
+	]);
+	if (winner === "event") return;
+	const error = await settled;
+	if (error) throw error;
+	throw new Error(
+		winner === "timeout"
+			? `${label} timed out`
+			: `${label} did not happen before the operation settled`,
+	);
 }
 
 function listen(server: Server): Promise<number> {
@@ -197,7 +226,9 @@ function sendOptions(
 	};
 }
 
-function startProtocolSmtp(mode: "stall-data" | "starttls-stall-data" | "tls-silent"): Promise<{
+function startProtocolSmtp(
+	mode: "accept" | "defer-accept" | "starttls-defer-accept" | "tls-silent",
+): Promise<{
 	port: number;
 	delivered: () => boolean;
 	sawData: Promise<void>;
@@ -205,7 +236,7 @@ function startProtocolSmtp(mode: "stall-data" | "starttls-stall-data" | "tls-sil
 	stop: () => Promise<void>;
 }> {
 	const sockets = new Set<Socket>();
-	const delivered = false;
+	let delivered = false;
 	let noteData: () => void = () => {};
 	const sawData = new Promise<void>((resolve) => {
 		noteData = resolve;
@@ -225,6 +256,14 @@ function startProtocolSmtp(mode: "stall-data" | "starttls-stall-data" | "tls-sil
 			if (phase === "data") {
 				if (buffer.includes("\r\n.\r\n")) {
 					noteData();
+					const target = writer;
+					const acceptDelay = mode === "accept" ? 0 : 800;
+					const timer = setTimeout(() => {
+						if (target.destroyed) return;
+						delivered = true;
+						target.write("250 queued\r\n");
+					}, acceptDelay);
+					target.on("close", () => clearTimeout(timer));
 					buffer = "";
 				}
 				return;
@@ -235,7 +274,7 @@ function startProtocolSmtp(mode: "stall-data" | "starttls-stall-data" | "tls-sil
 				buffer = buffer.slice(newline + 2);
 				const command = (line.split(" ")[0] ?? "").toUpperCase();
 				if (command === "EHLO" || command === "HELO") {
-					if (mode === "starttls-stall-data" && !upgraded)
+					if (mode === "starttls-defer-accept" && !upgraded)
 						write("250-localhost\r\n250-STARTTLS\r\n250 AUTH PLAIN\r\n");
 					else write("250-localhost\r\n250 AUTH PLAIN LOGIN\r\n");
 				} else if (command === "STARTTLS") {
@@ -365,7 +404,7 @@ test("aborting a stalled IMAP command cancels the Bridge call", async () => {
 		timeouts: { ...fastTimeouts, socketMs: 5_000 },
 	});
 	try {
-		await imap.sawStalledList;
+		await waitForServer(imap.sawStalledList, pending, "stalled LIST");
 		controller.abort();
 		await assert.rejects(pending, new RegExp(BRIDGE_CANCELLED_MESSAGE));
 		assert.ok(Date.now() - started < 1500);
@@ -427,7 +466,7 @@ test("abort during LOGOUT closes the socket without waiting out logout", async (
 		timeouts: { ...fastTimeouts, logoutMs: 5_000, socketMs: 5_000 },
 	});
 	try {
-		await imap.sawLogout;
+		await waitForServer(imap.sawLogout, pending, "LOGOUT");
 		controller.abort();
 		const result = await pending;
 		assert.ok(result.count >= 1);
@@ -458,6 +497,7 @@ test("aborting SMTP cancels the send without waiting out the greeting", async ()
 		await assert.rejects(pending, new RegExp(BRIDGE_CANCELLED_MESSAGE));
 		assert.ok(Date.now() - started < 1500);
 		await delay(150);
+		assert.equal(smtp.socketsClosed(), true);
 		assert.equal(timeoutCount(), before);
 	} finally {
 		controller.abort();
@@ -468,7 +508,7 @@ test("aborting SMTP cancels the send without waiting out the greeting", async ()
 
 test("abort during DATA closes SMTP before the message is accepted", async () => {
 	// @lat: [[tests#Operation timeouts#Abort during SMTP data]]
-	const smtp = await startProtocolSmtp("stall-data");
+	const smtp = await startProtocolSmtp("defer-accept");
 	const controller = new AbortController();
 	const { config, options } = sendOptions(smtp.port, "plain", {
 		signal: controller.signal,
@@ -477,15 +517,28 @@ test("abort during DATA closes SMTP before the message is accepted", async () =>
 	});
 	const pending = protonBridgeSendMessage(config, options);
 	try {
-		await smtp.sawData;
+		await waitForServer(smtp.sawData, pending, "SMTP DATA");
 		controller.abort();
 		await assert.rejects(pending, new RegExp(BRIDGE_CANCELLED_MESSAGE));
-		await delay(200);
+		await delay(1_000);
 		assert.equal(smtp.delivered(), false);
 		assert.equal(smtp.socketsClosed(), true);
 	} finally {
 		controller.abort();
 		await pending.catch(() => undefined);
+		await smtp.stop();
+	}
+});
+
+test("plain SMTP delivery is accepted when the send is not cancelled", async () => {
+	// @lat: [[tests#Operation timeouts#SMTP delivery accepted]]
+	const smtp = await startProtocolSmtp("accept");
+	const { config, options } = sendOptions(smtp.port, "plain");
+	try {
+		const result = await protonBridgeSendMessage(config, options);
+		assert.ok(result.message_id);
+		assert.equal(smtp.delivered(), true);
+	} finally {
 		await smtp.stop();
 	}
 });
@@ -516,7 +569,7 @@ test("abort closes an implicit TLS SMTP socket", async () => {
 
 test("abort during STARTTLS send closes the socket before acceptance", async () => {
 	// @lat: [[tests#Operation timeouts#Abort cancels STARTTLS]]
-	const smtp = await startProtocolSmtp("starttls-stall-data");
+	const smtp = await startProtocolSmtp("starttls-defer-accept");
 	const controller = new AbortController();
 	const { config, options } = sendOptions(smtp.port, "starttls", {
 		signal: controller.signal,
@@ -525,10 +578,10 @@ test("abort during STARTTLS send closes the socket before acceptance", async () 
 	});
 	const pending = protonBridgeSendMessage(config, options);
 	try {
-		await smtp.sawData;
+		await waitForServer(smtp.sawData, pending, "STARTTLS DATA");
 		controller.abort();
 		await assert.rejects(pending, new RegExp(BRIDGE_CANCELLED_MESSAGE));
-		await delay(200);
+		await delay(1_000);
 		assert.equal(smtp.delivered(), false);
 		assert.equal(smtp.socketsClosed(), true);
 	} finally {
@@ -568,7 +621,7 @@ test("a registered tool passes its abort signal through to Bridge", async () => 
 	assert.ok(tool);
 	const pending = tool.execute("call", {}, controller.signal, undefined, { cwd: process.cwd() });
 	try {
-		await imap.sawStalledList;
+		await waitForServer(imap.sawStalledList, pending, "stalled LIST");
 		controller.abort();
 		await assert.rejects(pending, new RegExp(BRIDGE_CANCELLED_MESSAGE));
 		await delay(50);

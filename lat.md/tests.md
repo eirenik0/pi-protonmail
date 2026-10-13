@@ -144,9 +144,13 @@ A server that accepts SMTP and never sends a greeting should reject the send fro
 
 Aborting during an SMTP greeting wait should cancel the send immediately, close the socket, and leave no greeting timer behind.
 
+### SMTP delivery accepted
+
+A completed plain SMTP send should be accepted by the server, so cancellation tests are compared with a path that really queues mail.
+
 ### Abort during SMTP data
 
-Aborting after the message body has been written should close the socket before the server accepts the message.
+Aborting after the message body has been written should close the socket before a deferred acceptance response is sent.
 
 ### Abort cancels implicit TLS
 
