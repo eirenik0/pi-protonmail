@@ -3,6 +3,7 @@
 ## Unreleased
 
 - Switched npm publishing to trusted publishing (GitHub OIDC); the workflow no longer uses an `NPM_TOKEN` secret.
+- Bounded Proton Bridge IMAP and SMTP waits (10s connect, 10s greeting, 60s socket inactivity, 5s logout) and cancel in-flight Bridge calls, including 1Password secret reads, when Esc aborts the tool.
 
 ## 0.4.0 - 2026-10-02
 

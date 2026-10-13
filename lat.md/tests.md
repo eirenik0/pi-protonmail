@@ -103,3 +103,67 @@ Outgoing tools should use an explicit `from` value first and otherwise require t
 ## Secret resolution
 
 `op://` and `op read` references should resolve before any Bridge request, and clear errors should surface when the 1Password CLI is unavailable or returns an empty secret.
+
+## Operation timeouts
+
+Bridge network waits should fail when Proton Bridge accepts a socket and then goes silent, and Esc should cancel the tool instead of leaving it running.
+
+### Stalled greeting
+
+A server that accepts IMAP and never sends a greeting should fail the call within the greeting timeout and drop the socket.
+
+### Stalled command
+
+A server that stops answering after login should fail the in-flight command on socket inactivity and drop the socket, without an uncaught ImapFlow error.
+
+### Post-login socket timeout
+
+A stall after login succeeds should still hit socket inactivity, so the post-connect error event is handled instead of crashing the process.
+
+### Abort during logout
+
+Esc during a stalled LOGOUT should close the socket immediately instead of waiting out the logout bound, after the IMAP work has already finished.
+
+### Failed connect
+
+A refused IMAP connection should surface the connection error, not a cancellation, and should not leave the client socket open.
+
+### Bounded logout
+
+A server that ignores LOGOUT should still finish within the logout bound, and a server that accepts LOGOUT should not leave the logout timer running.
+
+### Abort cancels IMAP
+
+Aborting the tool signal during a stalled mailbox list should reject with a cancellation and close the socket without waiting for socket inactivity.
+
+### SMTP greeting timeout
+
+A server that accepts SMTP and never sends a greeting should reject the send from Nodemailer's greeting timeout.
+
+### Abort cancels SMTP
+
+Aborting during an SMTP greeting wait should cancel the send immediately, close the socket, and leave no greeting timer behind.
+
+### SMTP delivery accepted
+
+A completed plain SMTP send should be accepted by the server, so cancellation tests are compared with a path that really queues mail.
+
+### Abort during SMTP data
+
+Aborting after the message body has been written should close the socket before a deferred acceptance response is sent.
+
+### Abort cancels implicit TLS
+
+Aborting an implicit TLS send should destroy that TLS socket and should not leave the greeting timer running.
+
+### Abort cancels STARTTLS
+
+Aborting a STARTTLS send after the message body is written should close the socket before the server accepts the message.
+
+### Tool signal reaches Bridge
+
+The abort signal passed to a registered Proton Mail tool should reach the Bridge call and cancel it.
+
+### Abort cancels secret reads
+
+An already aborted signal should reject an `op://` secret read before the 1Password CLI can block the tool.

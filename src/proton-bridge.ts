@@ -1,6 +1,7 @@
 import { access, copyFile, mkdir, readFile, writeFile } from "node:fs/promises";
-import { createConnection } from "node:net";
+import { createConnection, isIP, type Socket } from "node:net";
 import { basename, isAbsolute, join, relative, resolve } from "node:path";
+import tls from "node:tls";
 
 import { ImapFlow } from "imapflow";
 import { type AddressObject, simpleParser } from "mailparser";
@@ -8,6 +9,7 @@ import nodemailer from "nodemailer";
 import MailComposer from "nodemailer/lib/mail-composer/index.js";
 import type Mail from "nodemailer/lib/mailer/index.js";
 
+import { BRIDGE_CANCELLED_MESSAGE } from "./constants.ts";
 import type {
 	ApplyLabelsResult,
 	BridgeStatusResult,
@@ -140,6 +142,7 @@ async function probePort(
 	host: string,
 	port: number,
 	timeout = 1500,
+	signal?: AbortSignal,
 ): Promise<{ open: boolean; banner?: string; error?: string }> {
 	return new Promise((resolve) => {
 		const socket = createConnection({ host, port });
@@ -149,6 +152,7 @@ async function probePort(
 		const finish = (result: { open: boolean; banner?: string; error?: string }) => {
 			if (settled) return;
 			settled = true;
+			signal?.removeEventListener("abort", onAbort);
 			try {
 				socket.destroy();
 			} catch {
@@ -156,7 +160,13 @@ async function probePort(
 			}
 			resolve(result);
 		};
+		const onAbort = () => finish({ open: false, error: "cancelled" });
 
+		if (signal?.aborted) {
+			finish({ open: false, error: "cancelled" });
+			return;
+		}
+		signal?.addEventListener("abort", onAbort, { once: true });
 		socket.setTimeout(timeout);
 		socket.on("data", (chunk) => {
 			banner += chunk.toString("utf8");
@@ -178,7 +188,49 @@ function normalizeSecurity(security: string): "ssl" | "starttls" | "auto" | "pla
 	return "starttls";
 }
 
-async function connectImap(config: ProtonBridgeConfig): Promise<ImapFlow> {
+export const BRIDGE_CONNECTION_TIMEOUT_MS = 10_000;
+export const BRIDGE_GREETING_TIMEOUT_MS = 10_000;
+export const BRIDGE_SOCKET_TIMEOUT_MS = 60_000;
+export const BRIDGE_LOGOUT_TIMEOUT_MS = 5_000;
+export { BRIDGE_CANCELLED_MESSAGE };
+
+export interface BridgeTimeouts {
+	connectionMs: number;
+	greetingMs: number;
+	socketMs: number;
+	logoutMs: number;
+}
+
+export const defaultBridgeTimeouts: BridgeTimeouts = {
+	connectionMs: BRIDGE_CONNECTION_TIMEOUT_MS,
+	greetingMs: BRIDGE_GREETING_TIMEOUT_MS,
+	socketMs: BRIDGE_SOCKET_TIMEOUT_MS,
+	logoutMs: BRIDGE_LOGOUT_TIMEOUT_MS,
+};
+
+export interface BridgeCallOptions {
+	signal?: AbortSignal;
+	timeouts?: Partial<BridgeTimeouts>;
+}
+
+function resolveTimeouts(options?: BridgeCallOptions): BridgeTimeouts {
+	return { ...defaultBridgeTimeouts, ...options?.timeouts };
+}
+
+function cancelledError(): Error {
+	return new Error(BRIDGE_CANCELLED_MESSAGE);
+}
+
+function throwIfAborted(signal?: AbortSignal): void {
+	if (signal?.aborted) throw cancelledError();
+}
+
+// Socket timeouts after login are emitted as EventEmitter "error" events.
+// The in-flight command rejects when the socket closes; this listener only
+// keeps Node from crashing on an error event with no subscriber.
+function ignoreImapSocketError(): void {}
+
+function createImapClient(config: ProtonBridgeConfig, timeouts: BridgeTimeouts): ImapFlow {
 	const security = normalizeSecurity(config.security);
 	const client = new ImapFlow({
 		host: config.host,
@@ -192,12 +244,194 @@ async function connectImap(config: ProtonBridgeConfig): Promise<ImapFlow> {
 		tls: {
 			rejectUnauthorized: false,
 		},
+		connectionTimeout: timeouts.connectionMs,
+		greetingTimeout: timeouts.greetingMs,
+		socketTimeout: timeouts.socketMs,
 		// ImapFlow's default pino logger writes debug lines (including AUTH
 		// payloads) straight to stdout, which corrupts pi's fullscreen TUI.
 		logger: false,
 	});
-	await client.connect();
+	client.on("error", ignoreImapSocketError);
 	return client;
+}
+
+function bindImapAbort(client: ImapFlow, signal?: AbortSignal): () => void {
+	if (!signal) return () => {};
+	const onAbort = () => {
+		try {
+			client.close();
+		} catch {
+			// already closed
+		}
+	};
+	if (signal.aborted) {
+		onAbort();
+		return () => {};
+	}
+	signal.addEventListener("abort", onAbort, { once: true });
+	return () => signal.removeEventListener("abort", onAbort);
+}
+
+async function closeImap(client: ImapFlow, logoutMs: number, force: boolean): Promise<void> {
+	if (!force) {
+		let timer: ReturnType<typeof setTimeout> | undefined;
+		const logout = client.logout().then(
+			() => undefined,
+			() => undefined,
+		);
+		try {
+			await Promise.race([
+				logout,
+				new Promise<void>((resolve) => {
+					timer = setTimeout(resolve, logoutMs);
+				}),
+			]);
+		} finally {
+			if (timer) clearTimeout(timer);
+		}
+	}
+	try {
+		client.close();
+	} catch {
+		// already closed
+	}
+}
+
+async function withImap<T>(
+	config: ProtonBridgeConfig,
+	options: BridgeCallOptions | undefined,
+	run: (client: ImapFlow) => Promise<T>,
+): Promise<T> {
+	throwIfAborted(options?.signal);
+	const timeouts = resolveTimeouts(options);
+	const client = createImapClient(config, timeouts);
+	const unbind = bindImapAbort(client, options?.signal);
+	let connected = false;
+	try {
+		await client.connect();
+		connected = true;
+		throwIfAborted(options?.signal);
+		const result = await run(client);
+		throwIfAborted(options?.signal);
+		return result;
+	} catch (error) {
+		if (options?.signal?.aborted) throw cancelledError();
+		throw error;
+	} finally {
+		try {
+			// Keep the abort listener until logout finishes so Esc during LOGOUT
+			// closes the socket instead of waiting out the logout bound.
+			// A failed connect is closed without LOGOUT because the caller never
+			// receives that client.
+			await closeImap(client, timeouts.logoutMs, !connected || Boolean(options?.signal?.aborted));
+		} finally {
+			unbind();
+		}
+	}
+}
+
+function destroySmtpSocket(socket: Socket | undefined): void {
+	if (!socket || socket.destroyed) return;
+	// An error object makes Nodemailer run its error path, which clears the
+	// greeting timer. destroy() with no error only emits "close" and leaves it.
+	socket.destroy(cancelledError());
+}
+
+function createSmtpTransport(
+	config: ProtonBridgeConfig,
+	timeouts: BridgeTimeouts,
+	signal?: AbortSignal,
+) {
+	const security = normalizeSecurity(config.security);
+	let socket: Socket | undefined;
+	let handedOff = false;
+	const transport = nodemailer.createTransport({
+		host: config.host,
+		port: config.smtpPort,
+		secure: security === "ssl",
+		ignoreTLS: security === "plain",
+		requireTLS: security === "starttls",
+		auth: {
+			user: config.username,
+			pass: config.password,
+		},
+		tls: {
+			rejectUnauthorized: false,
+		},
+		logger: false,
+		connectionTimeout: timeouts.connectionMs,
+		greetingTimeout: timeouts.greetingMs,
+		socketTimeout: timeouts.socketMs,
+		// Own the TCP or TLS socket for every security mode. transport.close()
+		// does not close the live SMTP connection.
+		getSocket(
+			_options: unknown,
+			callback: (
+				error: Error | null,
+				socketOptions: { connection?: Socket; secured?: boolean },
+			) => void,
+		) {
+			if (signal?.aborted) {
+				callback(cancelledError(), {});
+				return;
+			}
+			let settled = false;
+			const finish = (
+				error: Error | null,
+				socketOptions: { connection?: Socket; secured?: boolean },
+			) => {
+				if (settled) return;
+				settled = true;
+				clearTimeout(timer);
+				signal?.removeEventListener("abort", onAbort);
+				if (error) destroySmtpSocket(socket);
+				else handedOff = true;
+				callback(error, socketOptions);
+			};
+			const onAbort = () => finish(cancelledError(), {});
+			signal?.addEventListener("abort", onAbort, { once: true });
+			const timer = setTimeout(
+				() => finish(new Error("SMTP connection timed out"), {}),
+				timeouts.connectionMs,
+			);
+			try {
+				socket =
+					security === "ssl"
+						? tls.connect({
+								host: config.host,
+								port: config.smtpPort,
+								...(isIP(config.host) ? {} : { servername: config.host }),
+								rejectUnauthorized: false,
+							})
+						: createConnection({ host: config.host, port: config.smtpPort });
+			} catch (error) {
+				finish(error instanceof Error ? error : new Error(String(error)), {});
+				return;
+			}
+			socket.on("error", () => {
+				// Keep a listener so a destroyed socket cannot crash the process
+				// before Nodemailer attaches its own handler.
+			});
+			socket.once("error", (error) => {
+				finish(error instanceof Error ? error : new Error(String(error)), {});
+			});
+			socket.once(security === "ssl" ? "secureConnect" : "connect", () => {
+				if (!socket) return;
+				finish(
+					null,
+					security === "ssl" ? { connection: socket, secured: true } : { connection: socket },
+				);
+			});
+		},
+	});
+	return {
+		transport,
+		destroy() {
+			destroySmtpSocket(socket);
+			if (!handedOff) socket = undefined;
+			transport.close();
+		},
+	};
 }
 
 async function listMailboxes(client: ImapFlow): Promise<MailboxInfo[]> {
@@ -494,9 +728,15 @@ function resolveLabelMailbox(label: string, mailboxes: MailboxInfo[]): string {
 	throw new Error(`Label mailbox "${trimmed}" was not found.${hint}`);
 }
 
-export async function protonBridgeStatus(config: ProtonBridgeConfig): Promise<BridgeStatusResult> {
-	const imapProbe = await probePort(config.host, config.imapPort);
-	const smtpProbe = await probePort(config.host, config.smtpPort);
+export async function protonBridgeStatus(
+	config: ProtonBridgeConfig,
+	options?: BridgeCallOptions,
+): Promise<BridgeStatusResult> {
+	throwIfAborted(options?.signal);
+	const imapProbe = await probePort(config.host, config.imapPort, 1500, options?.signal);
+	throwIfAborted(options?.signal);
+	const smtpProbe = await probePort(config.host, config.smtpPort, 1500, options?.signal);
+	throwIfAborted(options?.signal);
 	const result: BridgeStatusResult = {
 		config: {
 			host: config.host,
@@ -512,19 +752,22 @@ export async function protonBridgeStatus(config: ProtonBridgeConfig): Promise<Br
 	};
 
 	if (config.username && config.password && imapProbe.open) {
-		let client: ImapFlow | undefined;
 		try {
-			client = await connectImap(config);
-			const mailboxes = await listMailboxes(client);
+			const mailboxes = await withImap(config, options, (client) => listMailboxes(client));
 			result.login = {
 				ok: true,
 				mailbox_count: mailboxes.length,
 				mailboxes: mailboxes.slice(0, 10).map((mailbox) => ({ name: mailbox.name })),
 			};
 		} catch (error) {
+			if (
+				options?.signal?.aborted ||
+				(error instanceof Error && error.message === BRIDGE_CANCELLED_MESSAGE)
+			)
+				throw error instanceof Error && error.message === BRIDGE_CANCELLED_MESSAGE
+					? error
+					: cancelledError();
 			result.login = { ok: false, error: error instanceof Error ? error.message : String(error) };
-		} finally {
-			await client?.logout().catch(() => undefined);
 		}
 	}
 
@@ -534,12 +777,11 @@ export async function protonBridgeStatus(config: ProtonBridgeConfig): Promise<Br
 export async function protonBridgeListMailboxes(
 	config: ProtonBridgeConfig,
 	query?: string,
+	options?: BridgeCallOptions,
 ): Promise<MailboxListResult> {
 	if (!config.username || !config.password)
 		throw new Error("Missing Proton Bridge username/password.");
-	let client: ImapFlow | undefined;
-	try {
-		client = await connectImap(config);
+	return withImap(config, options, async (client) => {
 		const rows = await listMailboxes(client);
 		const filtered = query?.trim()
 			? rows.filter((row) => {
@@ -548,9 +790,7 @@ export async function protonBridgeListMailboxes(
 				})
 			: rows;
 		return { mailboxes: filtered, count: filtered.length };
-	} finally {
-		await client?.logout().catch(() => undefined);
-	}
+	});
 }
 
 export async function protonBridgeListMessages(
@@ -562,6 +802,7 @@ export async function protonBridgeListMessages(
 	limit = 20,
 	attachmentsOnly = false,
 	searchFields?: string[],
+	options?: BridgeCallOptions,
 ): Promise<MessageListResult> {
 	if (!config.username || !config.password)
 		throw new Error("Missing Proton Bridge username/password.");
@@ -569,12 +810,11 @@ export async function protonBridgeListMessages(
 	if (!selectedMailbox)
 		throw new Error("No mailbox provided and PROTON_BRIDGE_DEFAULT_MAILBOX is not set.");
 	validateSearchFields(searchFields);
-	let client: ImapFlow | undefined;
-	try {
-		client = await connectImap(config);
+	return withImap(config, options, async (client) => {
 		const uids = await searchUids(client, selectedMailbox, period, unseenOnly);
 		const messages: MessageInfo[] = [];
 		for (const uid of [...uids].reverse()) {
+			throwIfAborted(options?.signal);
 			const { parsed, source } = await fetchParsedMessage(client, uid);
 			const summary = messageFromParsed(uid, parsed, source.length);
 			if (attachmentsOnly && !summary.attachment_count) continue;
@@ -583,19 +823,15 @@ export async function protonBridgeListMessages(
 			if (messages.length >= limit) break;
 		}
 		return { mailbox: selectedMailbox, count: messages.length, messages };
-	} finally {
-		await client?.logout().catch(() => undefined);
-	}
+	});
 }
 
 export async function protonBridgeGetMessage(
 	config: ProtonBridgeConfig,
-	options: GetMessageOptions,
+	options: GetMessageOptions & BridgeCallOptions,
 ): Promise<GetMessageResult> {
 	requireBridgeCredentials(config);
-	let client: ImapFlow | undefined;
-	try {
-		client = await connectImap(config);
+	return withImap(config, options, async (client) => {
 		assertUid(options.uid);
 		await openMailbox(client, options.mailbox, true);
 		const { parsed, source } = await fetchParsedMessage(client, options.uid);
@@ -613,21 +849,17 @@ export async function protonBridgeGetMessage(
 					: parsed.html.trim() || undefined,
 			headers: options.includeHeaders === false ? undefined : headersFromParsed(parsed),
 		};
-	} finally {
-		await client?.logout().catch(() => undefined);
-	}
+	});
 }
 
 export async function protonBridgeCreateDraft(
 	config: ProtonBridgeConfig,
-	options: CreateDraftOptions,
+	options: CreateDraftOptions & BridgeCallOptions,
 ): Promise<CreateDraftResult> {
 	requireBridgeCredentials(config);
 	const mailbox = options.draftsMailbox?.trim() || "Drafts";
 	const raw = await buildMimeMessage(options, true);
-	let client: ImapFlow | undefined;
-	try {
-		client = await connectImap(config);
+	return withImap(config, options, async (client) => {
 		const result = await client.append(mailbox, raw, ["\\Draft", "\\Seen"], new Date());
 		return {
 			mailbox,
@@ -639,50 +871,62 @@ export async function protonBridgeCreateDraft(
 			subject: options.subject,
 			attachment_count: options.attachments?.length ?? 0,
 		};
-	} finally {
-		await client?.logout().catch(() => undefined);
-	}
+	});
 }
 
 export async function protonBridgeSendMessage(
 	config: ProtonBridgeConfig,
-	options: SendMessageOptions,
+	options: SendMessageOptions & BridgeCallOptions,
 ): Promise<SendMessageResult> {
 	requireBridgeCredentials(config);
+	throwIfAborted(options.signal);
 	const labels = [...new Set((options.labels ?? []).map((label) => label.trim()).filter(Boolean))];
 	if (labels.length > 0 && !options.saveToMailbox?.trim())
 		throw new Error(
 			"Applying labels to sent mail requires saveToMailbox so the saved UID can be labeled.",
 		);
 	const raw = await buildMimeMessage(options);
-	const security = normalizeSecurity(config.security);
-	const transport = nodemailer.createTransport({
-		host: config.host,
-		port: config.smtpPort,
-		secure: security === "ssl",
-		ignoreTLS: security === "plain",
-		requireTLS: security === "starttls",
-		auth: {
-			user: config.username,
-			pass: config.password,
-		},
-		tls: {
-			rejectUnauthorized: false,
-		},
-	});
+	throwIfAborted(options.signal);
+	const smtp = createSmtpTransport(config, resolveTimeouts(options), options.signal);
+	const onAbort = () => {
+		smtp.destroy();
+	};
+	if (options.signal?.aborted) onAbort();
+	else options.signal?.addEventListener("abort", onAbort);
 
 	let messageId = messageIdFromRaw(raw);
 	try {
-		const info = await transport.sendMail({
-			envelope: {
-				from: options.from,
-				to: allRecipients(options),
+		const info = await new Promise<Awaited<ReturnType<typeof smtp.transport.sendMail>>>(
+			(resolve, reject) => {
+				if (options.signal?.aborted) {
+					reject(cancelledError());
+					return;
+				}
+				smtp.transport
+					.sendMail({
+						envelope: {
+							from: options.from,
+							to: allRecipients(options),
+						},
+						raw,
+					})
+					.then(
+						(result) => {
+							if (options.signal?.aborted) reject(cancelledError());
+							else resolve(result);
+						},
+						(error: unknown) => {
+							if (options.signal?.aborted) reject(cancelledError());
+							else reject(error instanceof Error ? error : new Error(String(error)));
+						},
+					);
 			},
-			raw,
-		});
+		);
 		if (typeof info.messageId === "string") messageId = info.messageId;
 	} finally {
-		transport.close();
+		options.signal?.removeEventListener("abort", onAbort);
+		if (options.signal?.aborted) smtp.destroy();
+		else smtp.transport.close();
 	}
 
 	const result: SendMessageResult = {
@@ -697,15 +941,11 @@ export async function protonBridgeSendMessage(
 
 	const saveToMailbox = options.saveToMailbox?.trim();
 	if (saveToMailbox) {
-		let client: ImapFlow | undefined;
-		try {
-			client = await connectImap(config);
-			const appendResult = await client.append(saveToMailbox, raw, ["\\Seen"], new Date());
-			result.saved_to_mailbox = saveToMailbox;
-			result.saved_uid = appendUid(appendResult);
-		} finally {
-			await client?.logout().catch(() => undefined);
-		}
+		const appendResult = await withImap(config, options, (client) =>
+			client.append(saveToMailbox, raw, ["\\Seen"], new Date()),
+		);
+		result.saved_to_mailbox = saveToMailbox;
+		result.saved_uid = appendUid(appendResult);
 	}
 
 	if (labels.length > 0) {
@@ -717,6 +957,8 @@ export async function protonBridgeSendMessage(
 			mailbox: result.saved_to_mailbox,
 			uid: result.saved_uid,
 			labels,
+			signal: options.signal,
+			timeouts: options.timeouts,
 		});
 		result.labels = labelResult.labels;
 		result.label_mailboxes = labelResult.label_mailboxes;
@@ -727,12 +969,10 @@ export async function protonBridgeSendMessage(
 
 export async function protonBridgeMoveMessage(
 	config: ProtonBridgeConfig,
-	options: MoveMessageOptions,
+	options: MoveMessageOptions & BridgeCallOptions,
 ): Promise<MoveMessageResult> {
 	requireBridgeCredentials(config);
-	let client: ImapFlow | undefined;
-	try {
-		client = await connectImap(config);
+	return withImap(config, options, async (client) => {
 		await openMailbox(client, options.mailbox, false);
 		await assertUidExists(client, options.mailbox, options.uid);
 		const result = await client.messageMove(options.uid, options.destination, { uid: true });
@@ -742,19 +982,15 @@ export async function protonBridgeMoveMessage(
 			source: options.mailbox,
 			destination: options.destination,
 		};
-	} finally {
-		await client?.logout().catch(() => undefined);
-	}
+	});
 }
 
 export async function protonBridgeCopyMessage(
 	config: ProtonBridgeConfig,
-	options: CopyMessageOptions,
+	options: CopyMessageOptions & BridgeCallOptions,
 ): Promise<CopyMessageResult> {
 	requireBridgeCredentials(config);
-	let client: ImapFlow | undefined;
-	try {
-		client = await connectImap(config);
+	return withImap(config, options, async (client) => {
 		await openMailbox(client, options.mailbox, false);
 		await assertUidExists(client, options.mailbox, options.uid);
 		const result = await client.messageCopy(options.uid, options.destination, { uid: true });
@@ -765,21 +1001,17 @@ export async function protonBridgeCopyMessage(
 			destination: options.destination,
 			copied_uid: copyUid(result, options.uid),
 		};
-	} finally {
-		await client?.logout().catch(() => undefined);
-	}
+	});
 }
 
 export async function protonBridgeApplyLabels(
 	config: ProtonBridgeConfig,
-	options: ApplyLabelsOptions,
+	options: ApplyLabelsOptions & BridgeCallOptions,
 ): Promise<ApplyLabelsResult> {
 	requireBridgeCredentials(config);
 	const labels = [...new Set(options.labels.map((label) => label.trim()).filter(Boolean))];
 	if (labels.length === 0) throw new Error("At least one label is required.");
-	let client: ImapFlow | undefined;
-	try {
-		client = await connectImap(config);
+	return withImap(config, options, async (client) => {
 		const mailboxes = await listMailboxes(client);
 		await openMailbox(client, options.mailbox, false);
 		await assertUidExists(client, options.mailbox, options.uid);
@@ -787,6 +1019,7 @@ export async function protonBridgeApplyLabels(
 			...new Set(labels.map((label) => resolveLabelMailbox(label, mailboxes))),
 		];
 		for (const labelMailbox of labelMailboxes) {
+			throwIfAborted(options.signal);
 			const result = await client.messageCopy(options.uid, labelMailbox, { uid: true });
 			assertWriteResult(result, "label", options.uid, labelMailbox);
 		}
@@ -796,14 +1029,12 @@ export async function protonBridgeApplyLabels(
 			labels,
 			label_mailboxes: labelMailboxes,
 		};
-	} finally {
-		await client?.logout().catch(() => undefined);
-	}
+	});
 }
 
 export async function protonBridgeImportAttachments(
 	config: ProtonBridgeConfig,
-	options: ImportOptions,
+	options: ImportOptions & BridgeCallOptions,
 ): Promise<ProtonBridgeImportResult> {
 	if (!config.username || !config.password)
 		throw new Error("Missing Proton Bridge username/password.");
@@ -826,11 +1057,9 @@ export async function protonBridgeImportAttachments(
 	await ensureDir(mailRoot);
 	await ensureDir(inboxRoot);
 
-	let client: ImapFlow | undefined;
 	const importedMessages: ProtonBridgeImportResult["messages"] = [];
 	let importedAttachmentCount = 0;
-	try {
-		client = await connectImap(config);
+	return withImap(config, options, async (client) => {
 		const uids = await searchUids(
 			client,
 			selectedMailbox,
@@ -840,6 +1069,7 @@ export async function protonBridgeImportAttachments(
 		);
 		// Scan the whole period (like listing) so older matches are not silently skipped.
 		for (const uid of [...uids].reverse()) {
+			throwIfAborted(options.signal);
 			const { parsed, source } = await fetchParsedMessage(client, uid);
 			const summary = messageFromParsed(uid, parsed, source.length);
 			if (summary.attachment_count === 0) continue;
@@ -908,7 +1138,5 @@ export async function protonBridgeImportAttachments(
 			attachment_count: importedAttachmentCount,
 			messages: importedMessages,
 		};
-	} finally {
-		await client?.logout().catch(() => undefined);
-	}
+	});
 }

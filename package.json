@@ -45,6 +45,7 @@
 		"check": "biome check .",
 		"check:docs": "lat check",
 		"typecheck": "tsc -p tsconfig.json",
+		"test": "node --experimental-strip-types --test tests/*.ts",
 		"prepublishOnly": "npm run check && npm run typecheck",
 		"fix": "biome check --write ."
 	},

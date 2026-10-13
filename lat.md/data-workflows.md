@@ -25,3 +25,11 @@ Without these checks a missing destination folder or UID was reported to the LLM
 IMAP connections are created with ImapFlow's logger disabled, so protocol traces and AUTH payloads never reach stdout or the pi TUI.
 
 Secret values may be literal text or 1Password references handled by [[src/secret-refs.ts#resolveSecretReference]].
+
+## Operation timeouts
+
+Bridge IMAP and SMTP calls use [[src/proton-bridge.ts#defaultBridgeTimeouts]]: 10s to connect, 10s for the greeting, and 60s of socket inactivity.
+
+Inactivity is not a deadline for the whole call. A long import or an active transfer may run longer than 60s while bytes are still moving. The port probe stays at 1.5s.
+
+Logout waits at most 5s, and Esc during that logout closes the socket immediately. A failed connect is closed without LOGOUT because the caller never receives that client. Esc aborts the tool signal, which destroys the IMAP socket or the owned SMTP socket for plain, STARTTLS, and implicit TLS, and stops an in-flight `op read`. Cancelled send, append, move, or copy calls are not retried: the server may already have applied the write.

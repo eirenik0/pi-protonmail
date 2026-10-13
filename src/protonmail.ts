@@ -109,7 +109,10 @@ function parseMonthPeriod(value?: string): string | undefined {
 	return /^\d{4}-(0[1-9]|1[0-2])$/.test(value) ? value : undefined;
 }
 
-async function getProtonBridgeConfig(defaultMailbox?: string): Promise<ProtonBridgeConfig> {
+async function getProtonBridgeConfig(
+	defaultMailbox?: string,
+	signal?: AbortSignal,
+): Promise<ProtonBridgeConfig> {
 	const host = process.env.PROTON_BRIDGE_HOST?.trim() || "127.0.0.1";
 	const imapPort = Number.parseInt(process.env.PROTON_BRIDGE_IMAP_PORT?.trim() || "1143", 10);
 	const smtpPort = Number.parseInt(process.env.PROTON_BRIDGE_SMTP_PORT?.trim() || "1025", 10);
@@ -118,10 +121,10 @@ async function getProtonBridgeConfig(defaultMailbox?: string): Promise<ProtonBri
 	const rawUsername = process.env.PROTON_BRIDGE_USERNAME?.trim() || undefined;
 	const rawPassword = process.env.PROTON_BRIDGE_PASSWORD?.trim() || undefined;
 	const username = rawUsername
-		? await resolveSecretReference(rawUsername, "Proton Bridge username")
+		? await resolveSecretReference(rawUsername, "Proton Bridge username", signal)
 		: undefined;
 	const password = rawPassword
-		? await resolveSecretReference(rawPassword, "Proton Bridge password")
+		? await resolveSecretReference(rawPassword, "Proton Bridge password", signal)
 		: undefined;
 	return {
 		host,
@@ -204,19 +207,21 @@ async function resolveProtonMailActiveProfile(
 async function protonBridgeStatus(
 	_cwd: string,
 	defaultMailbox?: string,
+	signal?: AbortSignal,
 ): Promise<BridgeStatusResult> {
-	const config = await getProtonBridgeConfig(defaultMailbox);
-	return runProtonBridgeStatus(config);
+	const config = await getProtonBridgeConfig(defaultMailbox, signal);
+	return runProtonBridgeStatus(config, { signal });
 }
 
 async function listProtonMailboxes(
 	_cwd: string,
 	query?: string,
 	defaultMailbox?: string,
+	signal?: AbortSignal,
 ): Promise<MailboxListResult> {
-	const config = await getProtonBridgeConfig(defaultMailbox);
+	const config = await getProtonBridgeConfig(defaultMailbox, signal);
 	if (!config.username || !config.password) throw new Error(protonMailSetupHint(defaultMailbox));
-	return runProtonBridgeListMailboxes(config, query);
+	return runProtonBridgeListMailboxes(config, query, { signal });
 }
 
 async function listProtonMessages(
@@ -229,10 +234,11 @@ async function listProtonMessages(
 	defaultMailbox?: string,
 	attachmentsOnly = false,
 	searchFields?: string[],
+	signal?: AbortSignal,
 ): Promise<MessageListResult> {
 	// Validate arguments before resolving secrets, which may block on 1Password.
 	validateSearchFields(searchFields);
-	const config = await getProtonBridgeConfig(defaultMailbox);
+	const config = await getProtonBridgeConfig(defaultMailbox, signal);
 	if (!config.username || !config.password) throw new Error(protonMailSetupHint(defaultMailbox));
 	return runProtonBridgeListMessages(
 		config,
@@ -243,6 +249,7 @@ async function listProtonMessages(
 		limit,
 		attachmentsOnly,
 		searchFields,
+		{ signal },
 	);
 }
 
@@ -253,11 +260,12 @@ async function getProtonMessage(
 	includeBody = true,
 	includeHeaders = true,
 	defaultMailbox?: string,
+	signal?: AbortSignal,
 ): Promise<GetMessageResult> {
 	assertUid(uid);
-	const config = await getProtonBridgeConfig(defaultMailbox);
+	const config = await getProtonBridgeConfig(defaultMailbox, signal);
 	if (!config.username || !config.password) throw new Error(protonMailSetupHint(defaultMailbox));
-	return runProtonBridgeGetMessage(config, { mailbox, uid, includeBody, includeHeaders });
+	return runProtonBridgeGetMessage(config, { mailbox, uid, includeBody, includeHeaders, signal });
 }
 
 function resolveOutgoingFrom(from: string | undefined, profile: ProtonMailWorkingProfile): string {
@@ -570,12 +578,12 @@ export default function registerProtonBridgeExtension(pi: ExtensionAPI) {
 		async execute(
 			_id: string,
 			_params: Record<string, never>,
-			_signal: AbortSignal,
+			signal: AbortSignal,
 			_onUpdate: unknown,
 			ctx: ToolContext,
 		) {
 			const profile = await resolveProtonMailActiveProfile(ctx.cwd);
-			const result = await protonBridgeStatus(ctx.cwd, profile.policy.default_mailbox);
+			const result = await protonBridgeStatus(ctx.cwd, profile.policy.default_mailbox, signal);
 			return {
 				content: [{ type: "text", text: trimText(formatStatusSummary(result), 160, 16000) }],
 				details: result,
@@ -602,13 +610,18 @@ export default function registerProtonBridgeExtension(pi: ExtensionAPI) {
 		async execute(
 			_id: string,
 			params: { query?: string },
-			_signal: AbortSignal,
+			signal: AbortSignal,
 			_onUpdate: unknown,
 			ctx: ToolContext,
 		) {
 			const profile = await resolveProtonMailActiveProfile(ctx.cwd);
 			const query = params.query?.trim() || profile.policy.mailbox_filter;
-			const result = await listProtonMailboxes(ctx.cwd, query, profile.policy.default_mailbox);
+			const result = await listProtonMailboxes(
+				ctx.cwd,
+				query,
+				profile.policy.default_mailbox,
+				signal,
+			);
 			return {
 				content: [
 					{ type: "text", text: trimText(formatMailboxSummary(result, query), 160, 16000) },
@@ -667,7 +680,7 @@ export default function registerProtonBridgeExtension(pi: ExtensionAPI) {
 				unseenOnly?: boolean;
 				limit?: number;
 			},
-			_signal: AbortSignal,
+			signal: AbortSignal,
 			_onUpdate: unknown,
 			ctx: ToolContext,
 		) {
@@ -688,6 +701,7 @@ export default function registerProtonBridgeExtension(pi: ExtensionAPI) {
 				profile.policy.default_mailbox,
 				params.attachmentsOnly ?? false,
 				params.searchIn,
+				signal,
 			);
 			return {
 				content: [
@@ -731,7 +745,7 @@ export default function registerProtonBridgeExtension(pi: ExtensionAPI) {
 		async execute(
 			_id: string,
 			params: { mailbox: string; uid: string; includeBody?: boolean; includeHeaders?: boolean },
-			_signal: AbortSignal,
+			signal: AbortSignal,
 			_onUpdate: unknown,
 			ctx: ToolContext,
 		) {
@@ -743,6 +757,7 @@ export default function registerProtonBridgeExtension(pi: ExtensionAPI) {
 				params.includeBody ?? true,
 				params.includeHeaders ?? true,
 				profile.policy.default_mailbox,
+				signal,
 			);
 			return {
 				content: [{ type: "text", text: trimText(formatGetMessageSummary(result), 240, 24000) }],
@@ -798,13 +813,13 @@ export default function registerProtonBridgeExtension(pi: ExtensionAPI) {
 				attachments?: string[];
 				draftsMailbox?: string;
 			},
-			_signal: AbortSignal,
+			signal: AbortSignal,
 			_onUpdate: unknown,
 			ctx: ToolContext,
 		) {
 			const profile = await resolveProtonMailActiveProfile(ctx.cwd);
 			const from = resolveOutgoingFrom(params.from, profile);
-			const config = await getProtonBridgeConfig(profile.policy.default_mailbox);
+			const config = await getProtonBridgeConfig(profile.policy.default_mailbox, signal);
 			if (!config.username || !config.password)
 				throw new Error(protonMailSetupHint(profile.profile));
 			const result = await runProtonBridgeCreateDraft(config, {
@@ -817,6 +832,7 @@ export default function registerProtonBridgeExtension(pi: ExtensionAPI) {
 				body: params.body,
 				attachments: params.attachments,
 				draftsMailbox: params.draftsMailbox,
+				signal,
 			});
 			return {
 				content: [{ type: "text", text: trimText(formatCreateDraftSummary(result), 160, 16000) }],
@@ -879,7 +895,7 @@ export default function registerProtonBridgeExtension(pi: ExtensionAPI) {
 				saveToMailbox?: string;
 				labels?: string[];
 			},
-			_signal: AbortSignal,
+			signal: AbortSignal,
 			_onUpdate: unknown,
 			ctx: ToolContext,
 		) {
@@ -889,7 +905,7 @@ export default function registerProtonBridgeExtension(pi: ExtensionAPI) {
 				throw new Error(
 					"Applying labels to sent mail requires saveToMailbox so the saved UID can be labeled.",
 				);
-			const config = await getProtonBridgeConfig(profile.policy.default_mailbox);
+			const config = await getProtonBridgeConfig(profile.policy.default_mailbox, signal);
 			if (!config.username || !config.password)
 				throw new Error(protonMailSetupHint(profile.profile));
 			const result = await runProtonBridgeSendMessage(config, {
@@ -903,6 +919,7 @@ export default function registerProtonBridgeExtension(pi: ExtensionAPI) {
 				attachments: params.attachments,
 				saveToMailbox: params.saveToMailbox,
 				labels: params.labels,
+				signal,
 			});
 			return {
 				content: [{ type: "text", text: trimText(formatSendSummary(result), 160, 16000) }],
@@ -936,16 +953,16 @@ export default function registerProtonBridgeExtension(pi: ExtensionAPI) {
 		async execute(
 			_id: string,
 			params: { mailbox: string; uid: string; destination: string },
-			_signal: AbortSignal,
+			signal: AbortSignal,
 			_onUpdate: unknown,
 			ctx: ToolContext,
 		) {
 			const profile = await resolveProtonMailActiveProfile(ctx.cwd);
 			assertUid(params.uid);
-			const config = await getProtonBridgeConfig(profile.policy.default_mailbox);
+			const config = await getProtonBridgeConfig(profile.policy.default_mailbox, signal);
 			if (!config.username || !config.password)
 				throw new Error(protonMailSetupHint(profile.profile));
-			const result = await runProtonBridgeMoveMessage(config, params);
+			const result = await runProtonBridgeMoveMessage(config, { ...params, signal });
 			return {
 				content: [{ type: "text", text: trimText(formatMoveSummary(result), 160, 16000) }],
 				details: result,
@@ -978,16 +995,16 @@ export default function registerProtonBridgeExtension(pi: ExtensionAPI) {
 		async execute(
 			_id: string,
 			params: { mailbox: string; uid: string; destination: string },
-			_signal: AbortSignal,
+			signal: AbortSignal,
 			_onUpdate: unknown,
 			ctx: ToolContext,
 		) {
 			const profile = await resolveProtonMailActiveProfile(ctx.cwd);
 			assertUid(params.uid);
-			const config = await getProtonBridgeConfig(profile.policy.default_mailbox);
+			const config = await getProtonBridgeConfig(profile.policy.default_mailbox, signal);
 			if (!config.username || !config.password)
 				throw new Error(protonMailSetupHint(profile.profile));
-			const result = await runProtonBridgeCopyMessage(config, params);
+			const result = await runProtonBridgeCopyMessage(config, { ...params, signal });
 			return {
 				content: [{ type: "text", text: trimText(formatCopySummary(result), 160, 16000) }],
 				details: result,
@@ -1020,16 +1037,16 @@ export default function registerProtonBridgeExtension(pi: ExtensionAPI) {
 		async execute(
 			_id: string,
 			params: { mailbox: string; uid: string; labels: string[] },
-			_signal: AbortSignal,
+			signal: AbortSignal,
 			_onUpdate: unknown,
 			ctx: ToolContext,
 		) {
 			const profile = await resolveProtonMailActiveProfile(ctx.cwd);
 			assertUid(params.uid);
-			const config = await getProtonBridgeConfig(profile.policy.default_mailbox);
+			const config = await getProtonBridgeConfig(profile.policy.default_mailbox, signal);
 			if (!config.username || !config.password)
 				throw new Error(protonMailSetupHint(profile.profile));
-			const result = await runProtonBridgeApplyLabels(config, params);
+			const result = await runProtonBridgeApplyLabels(config, { ...params, signal });
 			return {
 				content: [{ type: "text", text: trimText(formatApplyLabelsSummary(result), 160, 16000) }],
 				details: result,
@@ -1084,7 +1101,7 @@ export default function registerProtonBridgeExtension(pi: ExtensionAPI) {
 				limit?: number;
 				workspaceRoot?: string;
 			},
-			_signal: AbortSignal,
+			signal: AbortSignal,
 			_onUpdate: unknown,
 			ctx: ToolContext,
 		) {
@@ -1097,7 +1114,7 @@ export default function registerProtonBridgeExtension(pi: ExtensionAPI) {
 				throw new Error("No period provided and the active profile has no default_period.");
 			// mailbox_filter applies to mailbox discovery, not message contents.
 			const query = params.query?.trim() || undefined;
-			const config = await getProtonBridgeConfig(profile.policy.default_mailbox);
+			const config = await getProtonBridgeConfig(profile.policy.default_mailbox, signal);
 			if (!config.username || !config.password)
 				throw new Error(protonMailSetupHint(profile.profile));
 			const workspaceRoot = resolveProtonMailImportWorkspaceRoot(
@@ -1114,6 +1131,7 @@ export default function registerProtonBridgeExtension(pi: ExtensionAPI) {
 				unseenOnly: params.unseenOnly ?? false,
 				markSeen: params.markSeen ?? false,
 				limit: params.limit ?? 100,
+				signal,
 			});
 			return {
 				content: [
