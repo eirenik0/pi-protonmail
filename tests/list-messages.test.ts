@@ -191,6 +191,40 @@ function fetchedUids(fetches: string[]): number[] {
 	return fetches.flatMap((line) => parseUidSet(line.split(" ")[3] ?? ""));
 }
 
+test("a fractional list limit is rejected before connecting", async () => {
+	// @lat: [[tests#Message previewing#Rejects a fractional limit]]
+	await assert.rejects(
+		() =>
+			protonBridgeListMessages(
+				config(1),
+				"INBOX",
+				undefined,
+				undefined,
+				false,
+				0.5,
+				false,
+				undefined,
+				{ timeouts: fastTimeouts },
+			),
+		/positive integer/,
+	);
+	await assert.rejects(
+		() =>
+			protonBridgeListMessages(
+				config(1),
+				"INBOX",
+				undefined,
+				undefined,
+				false,
+				1.5,
+				false,
+				undefined,
+				{ timeouts: fastTimeouts },
+			),
+		/positive integer/,
+	);
+});
+
 test("subject search fetches only matching message metadata", async () => {
 	// @lat: [[tests#Message previewing#Searches searchable fields on the server]]
 	const mailbox = await startMailbox({

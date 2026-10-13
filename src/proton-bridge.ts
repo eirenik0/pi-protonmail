@@ -513,6 +513,11 @@ function assertWriteResult(
 		);
 }
 
+function assertPositiveInteger(value: number, label: string): void {
+	if (!Number.isInteger(value) || value < 1)
+		throw new Error(`Invalid ${label} ${value}. Expected a positive integer.`);
+}
+
 export function validateSearchFields(fields?: string[]): void {
 	const invalid = (fields ?? []).filter((field) => !SEARCH_FIELDS.includes(field.toLowerCase()));
 	if (invalid.length)
@@ -967,6 +972,7 @@ export async function protonBridgeListMessages(
 	if (!selectedMailbox)
 		throw new Error("No mailbox provided and PROTON_BRIDGE_DEFAULT_MAILBOX is not set.");
 	validateSearchFields(searchFields);
+	assertPositiveInteger(limit, "message limit");
 	const fields = listSearchFields(searchFields);
 	const fieldSet = new Set(fields);
 	const needle = query?.trim().toLowerCase() ?? "";
@@ -1002,7 +1008,9 @@ export async function protonBridgeListMessages(
 			const room = limit - messages.length;
 			const exactPreview = (!needle || !scansLocally) && !attachmentsOnly;
 			const count = exactPreview ? Math.min(LIST_PREVIEW_BATCH, room) : LIST_PREVIEW_BATCH;
+			if (count < 1) break;
 			const batch = ordered.slice(index, index + count);
+			if (batch.length === 0) break;
 			index += batch.length;
 			const sourceUids = scansBody ? batch.filter((uid) => !serverMatched.has(uid)) : [];
 			const headerUids = scansHeaders

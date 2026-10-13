@@ -62,6 +62,10 @@ The default query ORs attachment filenames with subject and sender, so a newer f
 
 Listing without a query should fetch metadata for enough newest messages to fill the limit, not the rest of the mailbox.
 
+### Rejects a fractional limit
+
+A fractional or non-positive list limit is rejected before any mailbox scan, so a partial batch size cannot stall the preview loop.
+
 ### Searches headers without the body
 
 A header query should fetch header text, match decoded header lines including Subject, and should not download the message body.
