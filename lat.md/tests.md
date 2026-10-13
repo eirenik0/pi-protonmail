@@ -34,6 +34,54 @@ Message listing should include messages without attachments by default, but it s
 
 Message listing should keep the default query scope stable while allowing callers to search recipients, body text, headers, attachments, and message IDs explicitly.
 
+### Searches message ID and recipients
+
+A message-ID query should use the Message-ID header, and a recipient query should use the recipient search key, without falling back to a body search.
+
+### Searches searchable fields on the server
+
+A subject, sender, recipient, or message-ID query should be sent to IMAP and only the matching UIDs should have their envelope and body structure fetched.
+
+### Keeps period and unseen restrictions
+
+A field search should stay inside the requested month and unseen set instead of searching the rest of the mailbox.
+
+### Omits an invalid envelope date
+
+Listing should keep a message whose envelope date cannot be parsed and should leave that date unset instead of failing the preview.
+
+### Walks sparse UIDs newest first
+
+Listing should order numeric UIDs newest first and fetch those UIDs, not the sequence numbers in between.
+
+### Prefers a newer attachment match
+
+The default query ORs attachment filenames with subject and sender, so a newer filename match comes before an older subject match.
+
+### Fetches only the requested preview count
+
+Listing without a query should fetch metadata for enough newest messages to fill the limit, not the rest of the mailbox.
+
+### Searches headers without the body
+
+A header query should fetch header text, match decoded header lines including Subject, and should not download the message body.
+
+### Searches decoded message text
+
+A body query should match decoded message text, including quoted-printable or base64 parts, and should not issue an IMAP BODY search.
+
+### Reads decoded attachment filenames
+
+Attachment search should decode MIME filenames, including inline parts and files nested in another multipart, without downloading the message body.
+
+### Matches parsed attachment parts
+
+Listing should report the same attachment names and types as parsed mail for the same MIME message, including unnamed binaries, named text attachments, inline text left out, and an attached message kept as one file.
+
+### Cancels during a preview batch
+
+Esc during a metadata batch should cancel the listing instead of waiting for the remaining mailbox to download.
+
 ## Message reading
 
 Reading a single message should return parsed address fields, subject, date, bodies, headers, attachment metadata, and raw size for the requested mailbox UID.

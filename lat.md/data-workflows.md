@@ -10,6 +10,12 @@ Profile defaults live under `.pi/protonmail/config.json` and `.pi/protonmail/pro
 
 Attachment imports apply the optional `query` to each parsed message's subject, sender, message ID, and attachment names, the same default scope as message listing. They scan the whole period, so `limit` caps imported messages rather than the number of messages inspected. The workspace root must be a relative path that stays inside the project directory.
 
+## Message listing
+
+Message listing searches subject, sender, recipients, and message ID on the IMAP server, then fetches `ENVELOPE`, `BODYSTRUCTURE`, and size for the newest matches.
+
+The default query also ORs attachment filenames, so a filename match still walks the mailbox newest first. Header and body queries parse those parts locally, in batches, and stop once `limit` matches are found. A short result means fewer matches, not an early cutoff. Previews omit attachment sizes because the structure reports the encoded size, not the decoded size `get` returns. Imports still download full source for messages they save.
+
 ## Argument validation
 
 Cheap argument checks run before Bridge secrets are resolved, because `op read` can block for a minute when 1Password is locked.
