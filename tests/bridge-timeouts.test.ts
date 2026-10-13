@@ -1,11 +1,10 @@
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { type AddressInfo, createServer, type Server, type Socket } from "node:net";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { test } from "node:test";
 import tls from "node:tls";
+import { fileURLToPath } from "node:url";
 
 import {
 	BRIDGE_CANCELLED_MESSAGE,
@@ -181,30 +180,11 @@ function closeServer(server: Server, sockets: Set<Socket>): Promise<void> {
 	return new Promise((resolve) => server.close(() => resolve()));
 }
 
-function localCerts(): { key: Buffer; cert: Buffer } {
-	const dir = mkdtempSync(join(tmpdir(), "proton-smtp-"));
-	execFileSync("openssl", [
-		"req",
-		"-x509",
-		"-newkey",
-		"rsa:2048",
-		"-keyout",
-		join(dir, "key.pem"),
-		"-out",
-		join(dir, "cert.pem"),
-		"-days",
-		"1",
-		"-nodes",
-		"-subj",
-		"/CN=localhost",
-	]);
-	return {
-		key: readFileSync(join(dir, "key.pem")),
-		cert: readFileSync(join(dir, "cert.pem")),
-	};
-}
-
-const certs = localCerts();
+const fixtureDir = join(dirname(fileURLToPath(import.meta.url)), "fixtures");
+const certs = {
+	key: readFileSync(join(fixtureDir, "smtp-key.pem")),
+	cert: readFileSync(join(fixtureDir, "smtp-cert.pem")),
+};
 
 function sendOptions(
 	port: number,
