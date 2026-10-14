@@ -1,4 +1,5 @@
 import { access, copyFile, mkdir, readFile, writeFile } from "node:fs/promises";
+import { createRequire } from "node:module";
 import { createConnection, isIP, type Socket } from "node:net";
 import { basename, isAbsolute, join, relative, resolve } from "node:path";
 import tls from "node:tls";
@@ -18,12 +19,17 @@ import type {
 	GetMessageResult,
 	MailboxInfo,
 	MailboxListResult,
+	MessageAttachmentInfo,
 	MessageInfo,
 	MessageListResult,
 	MoveMessageResult,
 	ProtonBridgeConfig,
 	SendMessageResult,
 } from "./types.ts";
+
+const detectMimeType = (
+	createRequire(import.meta.url)("libmime") as { detectMimeType: (filename: string) => string }
+).detectMimeType;
 
 export interface ProtonBridgeImportResult {
 	workspace_root: string;
@@ -512,6 +518,11 @@ function assertWriteResult(
 		);
 }
 
+export function assertPositiveInteger(value: number, label: string): void {
+	if (!Number.isInteger(value) || value < 1)
+		throw new Error(`Invalid ${label} ${value}. Expected a positive integer.`);
+}
+
 export function validateSearchFields(fields?: string[]): void {
 	const invalid = (fields ?? []).filter((field) => !SEARCH_FIELDS.includes(field.toLowerCase()));
 	if (invalid.length)
@@ -526,11 +537,12 @@ async function searchUids(
 	period?: string,
 	unseenOnly = false,
 	readOnly = true,
+	criteria?: Record<string, unknown>,
 ): Promise<string[]> {
 	await openMailbox(client, mailbox, readOnly);
-	const search: Record<string, unknown> = {};
+	const search: Record<string, unknown> = { ...(criteria ?? {}) };
 	if (unseenOnly) search.seen = false;
-	else search.all = true;
+	else if (!criteria) search.all = true;
 	Object.assign(search, monthSearch(period));
 	const result = await client.search(search as Record<string, unknown>, { uid: true });
 	const uids = Array.isArray(result) ? result : [];
@@ -793,6 +805,164 @@ export async function protonBridgeListMailboxes(
 	});
 }
 
+const LIST_PREVIEW_BATCH = 50;
+
+// These fields map onto IMAP SEARCH keys. Body text stays on the parsed path
+// so the match stays the decoded text and HTML, not whatever IMAP BODY returns.
+const SERVER_SEARCH_FIELDS = new Set([
+	"subject",
+	"from",
+	"to",
+	"cc",
+	"bcc",
+	"messageid",
+	"message-id",
+]);
+
+type StructureNode = {
+	type?: string;
+	disposition?: string;
+	parameters?: Record<string, string>;
+	dispositionParameters?: Record<string, string>;
+	childNodes?: StructureNode[];
+};
+
+type EnvelopeAddress = { name?: string; address?: string };
+
+type ListFetch = {
+	uid?: number;
+	size?: number;
+	envelope?: {
+		date?: Date | string;
+		subject?: string;
+		messageId?: string;
+		from?: EnvelopeAddress[];
+		to?: EnvelopeAddress[];
+		cc?: EnvelopeAddress[];
+		bcc?: EnvelopeAddress[];
+	};
+	bodyStructure?: StructureNode;
+	headers?: Buffer;
+	source?: Buffer;
+};
+
+function listSearchFields(searchFields?: string[]): string[] {
+	return (
+		searchFields?.length ? searchFields : ["subject", "from", "messageId", "attachments"]
+	).map((field) => field.toLowerCase());
+}
+
+function serverSearchCriteria(
+	fields: string[],
+	query: string,
+): Record<string, unknown> | undefined {
+	const clauses: Record<string, unknown>[] = [];
+	for (const field of fields) {
+		if (!SERVER_SEARCH_FIELDS.has(field)) continue;
+		if (field === "subject") clauses.push({ subject: query });
+		else if (field === "from") clauses.push({ from: query });
+		else if (field === "to") clauses.push({ to: query });
+		else if (field === "cc") clauses.push({ cc: query });
+		else if (field === "bcc") clauses.push({ bcc: query });
+		else if (field === "messageid" || field === "message-id")
+			clauses.push({ header: { "Message-ID": query } });
+	}
+	if (clauses.length === 0) return undefined;
+	if (clauses.length === 1) return clauses[0];
+	return { or: clauses };
+}
+
+function formatAddressList(addresses?: EnvelopeAddress[]): string | undefined {
+	if (!addresses?.length) return undefined;
+	const text = addresses
+		.map((entry) => {
+			const address = entry.address?.trim();
+			const name = entry.name?.trim();
+			if (name && address) return `${name} <${address}>`;
+			return address || name || "";
+		})
+		.filter(Boolean)
+		.join(", ");
+	return text || undefined;
+}
+
+function attachmentFilename(node: StructureNode): string | undefined {
+	return node.dispositionParameters?.filename || node.parameters?.name || undefined;
+}
+
+const TEXT_PARTS = new Set(["text/plain", "text/html", "message/delivery-status"]);
+
+// mailparser lists a part when it is not an inline text body. Inline text/plain
+// and text/html stay body text, even with a filename. Any other type is an
+// attachment, as is a text part whose disposition is not inline. An attached
+// message/rfc822 is one attachment; files inside it are not listed again.
+// Previews omit attachment size because BODYSTRUCTURE reports the encoded size.
+function attachmentsFromStructure(node?: StructureNode): MessageAttachmentInfo[] {
+	if (!node) return [];
+	if ((node.type ?? "").startsWith("multipart/"))
+		return (node.childNodes ?? []).flatMap((child) => attachmentsFromStructure(child));
+	const filename = attachmentFilename(node);
+	const disposition = node.disposition?.toLowerCase();
+	const type = (node.type ?? "").toLowerCase();
+	const listed = (disposition !== undefined && disposition !== "inline") || !TEXT_PARTS.has(type);
+	if (!listed) return (node.childNodes ?? []).flatMap((child) => attachmentsFromStructure(child));
+	const contentType =
+		type === "application/octet-stream" && filename
+			? detectMimeType(filename) || type
+			: type || undefined;
+	return [{ filename: filename || "attachment", content_type: contentType }];
+}
+
+function envelopeDate(value: Date | string | undefined): string | undefined {
+	const date =
+		value instanceof Date ? value : typeof value === "string" ? new Date(value) : undefined;
+	if (!date || Number.isNaN(date.getTime())) return undefined;
+	return date.toISOString();
+}
+
+function messageFromEnvelope(uid: string, fetched: ListFetch): MessageInfo {
+	const envelope = fetched.envelope;
+	const date = envelopeDate(envelope?.date);
+	const attachments = attachmentsFromStructure(fetched.bodyStructure);
+	return {
+		uid,
+		message_id: envelope?.messageId?.trim() || undefined,
+		from: formatAddressList(envelope?.from),
+		subject: envelope?.subject?.trim() || undefined,
+		date,
+		attachments,
+		attachment_count: attachments.length,
+		raw_size: fetched.size,
+	};
+}
+
+function headerBlob(headers: Buffer): Promise<string> {
+	return simpleParser(Buffer.concat([headers, Buffer.from("\r\n\r\n")])).then((parsed) =>
+		[...parsed.headers.entries()]
+			.map(([name, value]) => `${name}: ${toStringValue(value)}`)
+			.join("\n"),
+	);
+}
+
+async function fetchListed(
+	client: ImapFlow,
+	uids: string[],
+	query: {
+		envelope?: boolean;
+		bodyStructure?: boolean;
+		size?: boolean;
+		headers?: boolean;
+		source?: boolean;
+	},
+): Promise<Map<string, ListFetch>> {
+	const found = new Map<string, ListFetch>();
+	if (uids.length === 0) return found;
+	for await (const message of client.fetch(uids.join(","), query, { uid: true })) {
+		found.set(String(message.uid), message as ListFetch);
+	}
+	return found;
+}
+
 export async function protonBridgeListMessages(
 	config: ProtonBridgeConfig,
 	mailbox: string | undefined,
@@ -810,17 +980,109 @@ export async function protonBridgeListMessages(
 	if (!selectedMailbox)
 		throw new Error("No mailbox provided and PROTON_BRIDGE_DEFAULT_MAILBOX is not set.");
 	validateSearchFields(searchFields);
+	assertPositiveInteger(limit, "message limit");
+	const fields = listSearchFields(searchFields);
+	const fieldSet = new Set(fields);
+	const needle = query?.trim().toLowerCase() ?? "";
+	const serverCriteria = needle ? serverSearchCriteria(fields, needle) : undefined;
+	const scansAttachments = Boolean(needle) && fieldSet.has("attachments");
+	const scansHeaders = Boolean(needle) && fieldSet.has("headers");
+	const scansBody = Boolean(needle) && fieldSet.has("body");
+	const scansLocally = scansAttachments || scansHeaders || scansBody;
 	return withImap(config, options, async (client) => {
-		const uids = await searchUids(client, selectedMailbox, period, unseenOnly);
+		const eligible =
+			!needle || scansLocally ? await searchUids(client, selectedMailbox, period, unseenOnly) : [];
+		const serverMatched = new Set<string>();
+		if (serverCriteria) {
+			for (const uid of await searchUids(
+				client,
+				selectedMailbox,
+				period,
+				unseenOnly,
+				true,
+				serverCriteria,
+			))
+				serverMatched.add(uid);
+		}
+		const pool = needle && serverCriteria && !scansLocally ? [...serverMatched] : eligible;
+		const ordered = pool
+			.map((uid) => Number(uid))
+			.filter((uid) => Number.isInteger(uid) && uid > 0)
+			.sort((left, right) => right - left)
+			.map((uid) => String(uid));
 		const messages: MessageInfo[] = [];
-		for (const uid of [...uids].reverse()) {
+		for (let index = 0; index < ordered.length && messages.length < limit; ) {
 			throwIfAborted(options?.signal);
-			const { parsed, source } = await fetchParsedMessage(client, uid);
-			const summary = messageFromParsed(uid, parsed, source.length);
-			if (attachmentsOnly && !summary.attachment_count) continue;
-			if (!matchesQuery(summary, parsed, query, searchFields)) continue;
-			messages.push(summary);
-			if (messages.length >= limit) break;
+			const room = limit - messages.length;
+			const exactPreview = (!needle || !scansLocally) && !attachmentsOnly;
+			const count = exactPreview ? Math.min(LIST_PREVIEW_BATCH, room) : LIST_PREVIEW_BATCH;
+			if (count < 1) break;
+			const batch = ordered.slice(index, index + count);
+			if (batch.length === 0) break;
+			index += batch.length;
+			const needsSource = (uid: string) => scansBody && !serverMatched.has(uid);
+			const headerUids = scansHeaders
+				? batch.filter((uid) => !serverMatched.has(uid) && !needsSource(uid))
+				: [];
+			const previewUids = batch.filter((uid) => !needsSource(uid) && !headerUids.includes(uid));
+			const previews = await fetchListed(client, previewUids, {
+				envelope: true,
+				bodyStructure: true,
+				size: true,
+			});
+			const headerFetches = await fetchListed(client, headerUids, {
+				envelope: true,
+				bodyStructure: true,
+				size: true,
+				headers: true,
+			});
+			for (const uid of batch) {
+				throwIfAborted(options?.signal);
+				const known = !needle || serverMatched.has(uid);
+				let summary: MessageInfo | undefined;
+				let localMatch = false;
+				const preview = previews.get(uid) ?? headerFetches.get(uid);
+				if (preview) {
+					summary = messageFromEnvelope(uid, preview);
+					if (scansAttachments)
+						localMatch = summary.attachments.some((attachment) =>
+							attachment.filename.toLowerCase().includes(needle),
+						);
+					if (!localMatch && scansHeaders && preview.headers) {
+						const headers = await headerBlob(preview.headers);
+						localMatch = headers.toLowerCase().includes(needle);
+					}
+				}
+				if (needsSource(uid)) {
+					const fetched = await fetchListed(client, [uid], { source: true });
+					const source = fetched.get(uid)?.source;
+					if (source) {
+						const raw = Buffer.isBuffer(source) ? source : Buffer.from(source);
+						const parsed = await simpleParser(raw);
+						const parsedSummary = messageFromParsed(uid, parsed, raw.length);
+						summary = {
+							...parsedSummary,
+							attachments: parsedSummary.attachments.map(({ filename, content_type }) => ({
+								filename,
+								content_type,
+							})),
+						};
+						localMatch = matchesQuery(
+							summary,
+							parsed,
+							needle,
+							[...fieldSet].filter(
+								(field) => field === "body" || field === "headers" || field === "attachments",
+							),
+						);
+					}
+				}
+				if (!summary) continue;
+				if (!known && !localMatch) continue;
+				if (attachmentsOnly && !summary.attachment_count) continue;
+				messages.push(summary);
+				if (messages.length >= limit) break;
+			}
 		}
 		return { mailbox: selectedMailbox, count: messages.length, messages };
 	});

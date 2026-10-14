@@ -10,11 +10,17 @@ Profile defaults live under `.pi/protonmail/config.json` and `.pi/protonmail/pro
 
 Attachment imports apply the optional `query` to each parsed message's subject, sender, message ID, and attachment names, the same default scope as message listing. They scan the whole period, so `limit` caps imported messages rather than the number of messages inspected. The workspace root must be a relative path that stays inside the project directory.
 
+## Message listing
+
+Message listing searches subject, sender, recipients, and message ID on the IMAP server, then fetches `ENVELOPE`, `BODYSTRUCTURE`, and size for the newest matches.
+
+The default query also ORs attachment filenames, so a filename match still walks the mailbox newest first. Header queries parse header text in metadata batches. A body query fetches and parses one message source, then decides, before downloading the next, and stops once `limit` matches are found. A short result means fewer matches, not an early cutoff. Previews omit attachment sizes on every branch, including a parsed body match. `get` still returns the decoded size. Imports still download full source for messages they save.
+
 ## Argument validation
 
 Cheap argument checks run before Bridge secrets are resolved, because `op read` can block for a minute when 1Password is locked.
 
-Periods must be `YYYY-MM` with a month of 01–12, UIDs must be positive integers, `searchIn` accepts only known fields, outgoing mail needs a `from` (explicit or profile `default_from`), and labels on sent mail require `saveToMailbox`. Mailboxes that cannot be opened are named in the error instead of ImapFlow's bare "Command failed".
+Periods must be `YYYY-MM` with a month of 01–12, UIDs and message list limits must be positive integers, `searchIn` accepts only known fields, outgoing mail needs a `from` (explicit or profile `default_from`), and labels on sent mail require `saveToMailbox`. Mailboxes that cannot be opened are named in the error instead of ImapFlow's bare "Command failed".
 
 ## Write-result checks
 
