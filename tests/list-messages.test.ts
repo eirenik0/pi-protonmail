@@ -698,6 +698,15 @@ test("preview attachments match parsed attachment names", async () => {
 	// @lat: [[tests#Message previewing#Matches parsed attachment parts]]
 	const fixtures = [
 		{
+			uid: 14,
+			subject: "octet",
+			raw: `Subject: octet\r\nMIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary=b\r\n\r\n--b\r\nContent-Type: text/plain\r\n\r\nhello\r\n--b\r\nContent-Type: application/octet-stream\r\nContent-Disposition: attachment; filename="report.pdf"\r\nContent-Transfer-Encoding: base64\r\n\r\nJVBERi0=\r\n--b--\r\n`,
+			structure: mixed("octet", [
+				textStructure(),
+				'("APPLICATION" "OCTET-STREAM" NIL NIL NIL "BASE64" 20 NIL ("ATTACHMENT" ("FILENAME" "report.pdf")) NIL NIL)',
+			]),
+		},
+		{
 			uid: 13,
 			subject: "image",
 			raw: `Subject: image\r\nMIME-Version: 1.0\r\nContent-Type: multipart/related; boundary=b\r\n\r\n--b\r\nContent-Type: text/html\r\n\r\n<img>\r\n--b\r\nContent-Type: image/png\r\nContent-Disposition: inline\r\nContent-Transfer-Encoding: base64\r\n\r\niVBORw0KGgo=\r\n--b--\r\n`,
@@ -770,7 +779,7 @@ test("preview attachments match parsed attachment names", async () => {
 		);
 		assert.deepEqual(
 			result.messages.map((message) => message.uid),
-			["13", "12", "11", "10", "9"],
+			["14", "13", "12", "11", "10", "9"],
 		);
 		assert.deepEqual(
 			result.messages.map((message) => ({

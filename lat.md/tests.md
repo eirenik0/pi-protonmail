@@ -84,6 +84,8 @@ Attachment search should decode MIME filenames, including inline parts and files
 
 Listing should report the same attachment names and types as parsed mail for the same MIME message, including unnamed binaries, named text attachments, inline text left out, and an attached message kept as one file.
 
+An `application/octet-stream` part with a recognized filename should use the same inferred type as parsed mail, such as `application/pdf` for `report.pdf`.
+
 ### Cancels during a preview batch
 
 Esc during a metadata batch should cancel the listing instead of waiting for the remaining mailbox to download.

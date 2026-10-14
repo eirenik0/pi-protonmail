@@ -1,4 +1,5 @@
 import { access, copyFile, mkdir, readFile, writeFile } from "node:fs/promises";
+import { createRequire } from "node:module";
 import { createConnection, isIP, type Socket } from "node:net";
 import { basename, isAbsolute, join, relative, resolve } from "node:path";
 import tls from "node:tls";
@@ -25,6 +26,10 @@ import type {
 	ProtonBridgeConfig,
 	SendMessageResult,
 } from "./types.ts";
+
+const detectMimeType = (
+	createRequire(import.meta.url)("libmime") as { detectMimeType: (filename: string) => string }
+).detectMimeType;
 
 export interface ProtonBridgeImportResult {
 	workspace_root: string;
@@ -901,7 +906,11 @@ function attachmentsFromStructure(node?: StructureNode): MessageAttachmentInfo[]
 	const type = (node.type ?? "").toLowerCase();
 	const listed = (disposition !== undefined && disposition !== "inline") || !TEXT_PARTS.has(type);
 	if (!listed) return (node.childNodes ?? []).flatMap((child) => attachmentsFromStructure(child));
-	return [{ filename: filename || "attachment", content_type: type || undefined }];
+	const contentType =
+		type === "application/octet-stream" && filename
+			? detectMimeType(filename) || type
+			: type || undefined;
+	return [{ filename: filename || "attachment", content_type: contentType }];
 }
 
 function envelopeDate(value: Date | string | undefined): string | undefined {
