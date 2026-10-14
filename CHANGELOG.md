@@ -2,7 +2,10 @@
 
 ## Unreleased
 
-- `protonmail_list_messages` searches subject, sender, recipients, and message ID on the IMAP server and previews matches from envelope metadata instead of downloading every message. Attachment, header, and body matches still walk the mailbox newest first.
+## 0.5.0 - 2026-10-14
+
+- `protonmail_list_messages` searches subject, sender, recipients, and message ID on the IMAP server and previews matches from envelope metadata instead of downloading every message. Attachment and header matches still walk the mailbox newest first. A body query fetches one message at a time and stops at the limit. Previews omit attachment sizes and infer a type from the filename when the part is `application/octet-stream`.
+- A non-integer message list limit is rejected before 1Password secret resolution.
 - Switched npm publishing to trusted publishing (GitHub OIDC); the workflow no longer uses an `NPM_TOKEN` secret.
 - Bounded Proton Bridge IMAP and SMTP waits (10s connect, 10s greeting, 60s socket inactivity, 5s logout) and cancel in-flight Bridge calls, including 1Password secret reads, when Esc aborts the tool.
 
