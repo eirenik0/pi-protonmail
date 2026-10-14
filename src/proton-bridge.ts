@@ -513,7 +513,7 @@ function assertWriteResult(
 		);
 }
 
-function assertPositiveInteger(value: number, label: string): void {
+export function assertPositiveInteger(value: number, label: string): void {
 	if (!Number.isInteger(value) || value < 1)
 		throw new Error(`Invalid ${label} ${value}. Expected a positive integer.`);
 }

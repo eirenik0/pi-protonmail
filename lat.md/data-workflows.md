@@ -20,7 +20,7 @@ The default query also ORs attachment filenames, so a filename match still walks
 
 Cheap argument checks run before Bridge secrets are resolved, because `op read` can block for a minute when 1Password is locked.
 
-Periods must be `YYYY-MM` with a month of 01–12, UIDs must be positive integers, `searchIn` accepts only known fields, outgoing mail needs a `from` (explicit or profile `default_from`), and labels on sent mail require `saveToMailbox`. Mailboxes that cannot be opened are named in the error instead of ImapFlow's bare "Command failed".
+Periods must be `YYYY-MM` with a month of 01–12, UIDs and message list limits must be positive integers, `searchIn` accepts only known fields, outgoing mail needs a `from` (explicit or profile `default_from`), and labels on sent mail require `saveToMailbox`. Mailboxes that cannot be opened are named in the error instead of ImapFlow's bare "Command failed".
 
 ## Write-result checks
 

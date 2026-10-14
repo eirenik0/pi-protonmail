@@ -8,6 +8,7 @@ import { Type } from "typebox";
 import { PREVIEW_LINES } from "./constants.ts";
 import { openProtonMailHub } from "./hub.ts";
 import {
+	assertPositiveInteger,
 	assertUid,
 	protonBridgeApplyLabels as runProtonBridgeApplyLabels,
 	protonBridgeCopyMessage as runProtonBridgeCopyMessage,
@@ -238,6 +239,7 @@ async function listProtonMessages(
 ): Promise<MessageListResult> {
 	// Validate arguments before resolving secrets, which may block on 1Password.
 	validateSearchFields(searchFields);
+	assertPositiveInteger(limit, "message limit");
 	const config = await getProtonBridgeConfig(defaultMailbox, signal);
 	if (!config.username || !config.password) throw new Error(protonMailSetupHint(defaultMailbox));
 	return runProtonBridgeListMessages(

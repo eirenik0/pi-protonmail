@@ -64,7 +64,7 @@ Listing without a query should fetch metadata for enough newest messages to fill
 
 ### Rejects a fractional limit
 
-A fractional or non-positive list limit is rejected before any mailbox scan, so a partial batch size cannot stall the preview loop.
+A fractional or non-positive list limit is rejected before secret resolution or any mailbox scan, so a partial batch size cannot stall the preview loop.
 
 ### Searches headers without the body
 

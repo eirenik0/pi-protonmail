@@ -4,6 +4,7 @@ import { test } from "node:test";
 import { simpleParser } from "mailparser";
 import { BRIDGE_CANCELLED_MESSAGE } from "../src/constants.ts";
 import { protonBridgeListMessages } from "../src/proton-bridge.ts";
+import registerProtonBridgeExtension from "../src/protonmail.ts";
 
 const fastTimeouts = {
 	connectionMs: 800,
@@ -191,8 +192,34 @@ function fetchedUids(fetches: string[]): number[] {
 	return fetches.flatMap((line) => parseUidSet(line.split(" ")[3] ?? ""));
 }
 
-test("a fractional list limit is rejected before connecting", async () => {
+test("a fractional list limit is rejected before resolving secrets", async () => {
 	// @lat: [[tests#Message previewing#Rejects a fractional limit]]
+	const tools = new Map<string, { execute: (...args: unknown[]) => Promise<unknown> }>();
+	registerProtonBridgeExtension({
+		registerMessageRenderer() {},
+		registerCommand() {},
+		registerTool(tool: { name: string; execute: (...args: unknown[]) => Promise<unknown> }) {
+			tools.set(tool.name, tool);
+		},
+	} as never);
+	const previous = process.env.PROTON_BRIDGE_USERNAME;
+	process.env.PROTON_BRIDGE_USERNAME = "op://vault/item/username";
+	const tool = tools.get("protonmail_list_messages");
+	assert.ok(tool);
+	try {
+		await assert.rejects(
+			tool.execute("call", { limit: 0.5 }, new AbortController().signal, undefined, {
+				cwd: process.cwd(),
+			}),
+			/positive integer/,
+		);
+	} finally {
+		if (previous === undefined) delete process.env.PROTON_BRIDGE_USERNAME;
+		else process.env.PROTON_BRIDGE_USERNAME = previous;
+	}
+});
+
+test("a fractional list limit is rejected before connecting", async () => {
 	await assert.rejects(
 		() =>
 			protonBridgeListMessages(
