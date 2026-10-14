@@ -588,13 +588,14 @@ test("body search reads the decoded message instead of IMAP BODY", async () => {
 	const mailbox = await startMailbox({
 		messages: [
 			{
-				uid: 2,
+				uid: 3,
 				subject: "Other",
 				source: source("Other", "Meet in Berl=\r\nin\r\n", "quoted-printable"),
 			},
+			{ uid: 2, subject: "Middle", source: source("Middle", "Meet in Berlin\r\n") },
 			{ uid: 1, subject: "Berlin", source: source("Berlin", "hello\r\n") },
 		],
-		search: () => [2, 1],
+		search: () => [3, 2, 1],
 	});
 	try {
 		const result = await protonBridgeListMessages(
@@ -603,23 +604,20 @@ test("body search reads the decoded message instead of IMAP BODY", async () => {
 			undefined,
 			"Berlin",
 			false,
-			10,
+			1,
 			false,
 			["body"],
 			{ timeouts: fastTimeouts },
 		);
 		assert.deepEqual(
 			result.messages.map((message) => message.uid),
-			["2"],
+			["3"],
 		);
 		assert.equal(
 			mailbox.searches.some((line) => /\bBODY\b/i.test(line)),
 			false,
 		);
-		assert.equal(
-			mailbox.fetches.some((line) => /BODY\.PEEK\[\]/i.test(line)),
-			true,
-		);
+		assert.equal(mailbox.fetches.filter((line) => /BODY\.PEEK\[\]/i.test(line)).length, 1);
 	} finally {
 		await mailbox.stop();
 	}

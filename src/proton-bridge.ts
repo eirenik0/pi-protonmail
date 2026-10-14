@@ -801,7 +801,6 @@ export async function protonBridgeListMailboxes(
 }
 
 const LIST_PREVIEW_BATCH = 50;
-const LIST_SOURCE_BATCH = 1;
 
 // These fields map onto IMAP SEARCH keys. Body text stays on the parsed path
 // so the match stays the decoded text and HTML, not whatever IMAP BODY returns.
@@ -1012,13 +1011,11 @@ export async function protonBridgeListMessages(
 			const batch = ordered.slice(index, index + count);
 			if (batch.length === 0) break;
 			index += batch.length;
-			const sourceUids = scansBody ? batch.filter((uid) => !serverMatched.has(uid)) : [];
+			const needsSource = (uid: string) => scansBody && !serverMatched.has(uid);
 			const headerUids = scansHeaders
-				? batch.filter((uid) => !serverMatched.has(uid) && !sourceUids.includes(uid))
+				? batch.filter((uid) => !serverMatched.has(uid) && !needsSource(uid))
 				: [];
-			const previewUids = batch.filter(
-				(uid) => !sourceUids.includes(uid) && !headerUids.includes(uid),
-			);
+			const previewUids = batch.filter((uid) => !needsSource(uid) && !headerUids.includes(uid));
 			const previews = await fetchListed(client, previewUids, {
 				envelope: true,
 				bodyStructure: true,
@@ -1030,16 +1027,6 @@ export async function protonBridgeListMessages(
 				size: true,
 				headers: true,
 			});
-			const sources = new Map<string, ListFetch>();
-			for (let sourceIndex = 0; sourceIndex < sourceUids.length; sourceIndex += LIST_SOURCE_BATCH) {
-				throwIfAborted(options?.signal);
-				const fetched = await fetchListed(
-					client,
-					sourceUids.slice(sourceIndex, sourceIndex + LIST_SOURCE_BATCH),
-					{ source: true },
-				);
-				for (const [uid, message] of fetched) sources.set(uid, message);
-			}
 			for (const uid of batch) {
 				throwIfAborted(options?.signal);
 				const known = !needle || serverMatched.has(uid);
@@ -1057,19 +1044,22 @@ export async function protonBridgeListMessages(
 						localMatch = headers.toLowerCase().includes(needle);
 					}
 				}
-				const source = sources.get(uid);
-				if (source?.source) {
-					const raw = Buffer.isBuffer(source.source) ? source.source : Buffer.from(source.source);
-					const parsed = await simpleParser(raw);
-					summary = messageFromParsed(uid, parsed, raw.length);
-					localMatch = matchesQuery(
-						summary,
-						parsed,
-						needle,
-						[...fieldSet].filter(
-							(field) => field === "body" || field === "headers" || field === "attachments",
-						),
-					);
+				if (needsSource(uid)) {
+					const fetched = await fetchListed(client, [uid], { source: true });
+					const source = fetched.get(uid)?.source;
+					if (source) {
+						const raw = Buffer.isBuffer(source) ? source : Buffer.from(source);
+						const parsed = await simpleParser(raw);
+						summary = messageFromParsed(uid, parsed, raw.length);
+						localMatch = matchesQuery(
+							summary,
+							parsed,
+							needle,
+							[...fieldSet].filter(
+								(field) => field === "body" || field === "headers" || field === "attachments",
+							),
+						);
+					}
 				}
 				if (!summary) continue;
 				if (!known && !localMatch) continue;

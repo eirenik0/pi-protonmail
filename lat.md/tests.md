@@ -72,7 +72,7 @@ A header query should fetch header text, match decoded header lines including Su
 
 ### Searches decoded message text
 
-A body query should match decoded message text, including quoted-printable or base64 parts, and should not issue an IMAP BODY search.
+A body query should match decoded message text, including quoted-printable or base64 parts, without an IMAP BODY search. With a small limit it should download the next full message only after the previous one fails to match.
 
 ### Reads decoded attachment filenames
 

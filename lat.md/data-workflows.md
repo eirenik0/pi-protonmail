@@ -14,7 +14,7 @@ Attachment imports apply the optional `query` to each parsed message's subject, 
 
 Message listing searches subject, sender, recipients, and message ID on the IMAP server, then fetches `ENVELOPE`, `BODYSTRUCTURE`, and size for the newest matches.
 
-The default query also ORs attachment filenames, so a filename match still walks the mailbox newest first. Header and body queries parse those parts locally, in batches, and stop once `limit` matches are found. A short result means fewer matches, not an early cutoff. Previews omit attachment sizes because the structure reports the encoded size, not the decoded size `get` returns. Imports still download full source for messages they save.
+The default query also ORs attachment filenames, so a filename match still walks the mailbox newest first. Header queries parse header text in metadata batches. A body query fetches and parses one message source, then decides, before downloading the next, and stops once `limit` matches are found. A short result means fewer matches, not an early cutoff. Previews omit attachment sizes because the structure reports the encoded size, not the decoded size `get` returns. Imports still download full source for messages they save.
 
 ## Argument validation
 
