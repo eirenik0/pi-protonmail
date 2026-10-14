@@ -590,7 +590,7 @@ test("body search reads the decoded message instead of IMAP BODY", async () => {
 			{
 				uid: 3,
 				subject: "Other",
-				source: source("Other", "Meet in Berl=\r\nin\r\n", "quoted-printable"),
+				source: `Subject: Other\r\nFrom: Ada <ada@example.com>\r\nMIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary=b\r\n\r\n--b\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Transfer-Encoding: quoted-printable\r\n\r\nMeet in Berl=\r\nin\r\n--b\r\nContent-Type: application/pdf\r\nContent-Disposition: attachment; filename="trip.pdf"\r\nContent-Transfer-Encoding: base64\r\n\r\nJVBERi0=\r\n--b--\r\n`,
 			},
 			{ uid: 2, subject: "Middle", source: source("Middle", "Meet in Berlin\r\n") },
 			{ uid: 1, subject: "Berlin", source: source("Berlin", "hello\r\n") },
@@ -618,6 +618,9 @@ test("body search reads the decoded message instead of IMAP BODY", async () => {
 			false,
 		);
 		assert.equal(mailbox.fetches.filter((line) => /BODY\.PEEK\[\]/i.test(line)).length, 1);
+		assert.deepEqual(result.messages[0]?.attachments, [
+			{ filename: "trip.pdf", content_type: "application/pdf" },
+		]);
 	} finally {
 		await mailbox.stop();
 	}

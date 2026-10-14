@@ -1050,7 +1050,14 @@ export async function protonBridgeListMessages(
 					if (source) {
 						const raw = Buffer.isBuffer(source) ? source : Buffer.from(source);
 						const parsed = await simpleParser(raw);
-						summary = messageFromParsed(uid, parsed, raw.length);
+						const parsedSummary = messageFromParsed(uid, parsed, raw.length);
+						summary = {
+							...parsedSummary,
+							attachments: parsedSummary.attachments.map(({ filename, content_type }) => ({
+								filename,
+								content_type,
+							})),
+						};
 						localMatch = matchesQuery(
 							summary,
 							parsed,
